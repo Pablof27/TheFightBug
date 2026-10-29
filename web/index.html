@@ -106,6 +106,42 @@
       fail('Sorry, the game could not start. Try reloading, or another browser (details in the console).');
     });
 
+    // The save slots live in LÖVE's save directory, which love.js mirrors in IndexedDB but only copies there when the
+    // page unloads: mobile browsers often skip that, and a crash always does. web/build.sh exposes love.js's file
+    // system as Module.FS, so every change in that directory is stored a moment after the game makes it.
+    function watchSaves() {
+      var FS = Module.FS;
+      var ROOT = '/home/web_user/love/';
+      if (!FS || !FS.trackingDelegate) {
+        console.warn('Saves are only stored when the page closes (Module.FS is missing).');
+        return;
+      }
+      var dirty = false, timer = null;
+      function store() {
+        clearTimeout(timer);
+        timer = null;
+        if (!dirty) return;
+        // One sync at a time. Above all, never while love.js is still loading the saves at startup: a copy made from a
+        // half-loaded directory would delete the files it hasn't loaded yet.
+        if (FS.syncFSRequests > 0) { timer = setTimeout(store, 200); return; }
+        dirty = false;
+        FS.syncfs(false, function (err) {
+          if (err) { dirty = true; console.error('Could not store the saves:', err); return; }
+          if (dirty && !timer) timer = setTimeout(store, 200);
+        });
+      }
+      function changed(path) {
+        if (String(path).indexOf(ROOT) !== 0) return;
+        dirty = true;
+        if (!timer) timer = setTimeout(store, 200);
+      }
+      FS.trackingDelegate.onWriteToFile = changed;
+      FS.trackingDelegate.onDeletePath = changed;
+      FS.trackingDelegate.onMovePath = function (from, to) { changed(from); changed(to); };
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') store(); });
+      window.addEventListener('pagehide', store);
+    }
+
     var Module = {
       arguments: ['./game.love'],
       INITIAL_MEMORY: {{memory}},
@@ -135,6 +171,6 @@
     };
   </script>
   <script src="game.js?v={{build}}"></script>
-  <script async src="love.js?v={{build}}" onload="Love(Module)" onerror="fail('Could not load the game engine (love.js).')"></script>
+  <script async src="love.js?v={{build}}" onload="Love(Module); watchSaves()" onerror="fail('Could not load the game engine (love.js).')"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ local Fx = require("client.fx")
 local Tween = require("client.tween")
 local UI = require("client.ui")
 local HandView = require("client.fight.hand_view")
+local Saves = require("client.saves")
 local Run = require("sim.run")
 local Shop = require("sim.shop")
 local Cards = require("data.cards")
@@ -103,6 +104,7 @@ function Scene:buy(it)
         return
     end
     Audio.play("coin")
+    Saves.store(self.run)
     self.lastBought = it
     Fx.sparkle(it.x, it.y, 14, 70)
     Fx.text(BOUGHT[it.kind], it.x, it.y - 20, C.yellow, 28)

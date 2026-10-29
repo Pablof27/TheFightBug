@@ -6,7 +6,6 @@ local Text = require("client.text")
 local Audio = require("client.audio")
 local Tween = require("client.tween")
 local UI = require("client.ui")
-local Run = require("sim.run")
 
 local C = Paper.C
 local Title = {}
@@ -33,11 +32,10 @@ function Title:enter()
     Tween.to(self, { logoScale = 0.72 }, 0.9, "outBack")
 end
 
+--- PLAY: pick a save slot (client/scenes/slots.lua), which starts or continues the day.
 function Title:start()
     Audio.play("ui_click")
-    Audio.play("win", 0.4)
-    self.app.run = Run.new(7)
-    self.app.switch("map", { run = self.app.run, intro = true })
+    self.app.switch("slots")
 end
 
 function Title:update(dt)
@@ -76,6 +74,7 @@ function Title:draw()
     if CAN_QUIT then UI.button(QUIT, "QUIT", { hover = self.hover == "quit", size = 26, seed = 72, fill = C.orange }) end
     Text.body("Press SPACE to play  ·  M mutes  ·  F11 fullscreen", 552, 790, 14, { 1, 1, 1 }, "center", nil, 2)
     Text.body("A first playable demo.", 800, 876, 12.5, { 1, 0.95, 0.85 }, "center", nil, 2)
+    if self.app.debug then Text.body("DEBUG MODE", 1584, 14, 13, C.yellow, "right", nil, 2) end
 end
 
 function Title:mousemoved(x, y)

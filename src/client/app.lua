@@ -6,11 +6,18 @@ local Tween = require("client.tween")
 local Audio = require("client.audio")
 local Fx = require("client.fx")
 
-local App = { scene = nil, time = 0, trans = nil, mouse = { x = 0, y = 0 }, cursor = true }
+-- debug: launched with --debug (love . --debug). New games then ask for the seed of their random generator.
+local App = { scene = nil, time = 0, trans = nil, mouse = { x = 0, y = 0 }, cursor = true, debug = false }
 
 local scenes = {}
 
+local function hasFlag(args, flag)
+    for _, a in ipairs(args or {}) do if a == flag then return true end end
+    return false
+end
+
 function App.load(args)
+    App.debug = hasFlag(args, "--debug")
     love.graphics.setBackgroundColor(0.17, 0.07, 0.22)
     love.mouse.setVisible(false)
     Screen.resize()
@@ -18,13 +25,12 @@ function App.load(args)
     App.mouse.x, App.mouse.y = mx, my
     Assets.load()
     scenes.title = require("client.scenes.title")
+    scenes.slots = require("client.scenes.slots")
     scenes.map = require("client.scenes.map")
     scenes.fight = require("client.scenes.fight")
     scenes.shop = require("client.scenes.shop")
     scenes.ending = require("client.scenes.ending")
-    local first = "title"
-    for _, a in ipairs(args or {}) do if a == "--fight" then first = "fight" end end
-    App.switch(first, {}, true)
+    App.switch(hasFlag(args, "--fight") and "fight" or "title", {}, true)
 end
 
 --- Change scene with an iris wipe. params go to the new scene's enter().
@@ -116,6 +122,12 @@ function App.keypressed(key, isrepeat)
     if key == "f11" then love.window.setFullscreen(not love.window.getFullscreen()) return end
     if blocked() then return end
     if App.scene and App.scene.keypressed then App.scene:keypressed(key, isrepeat) end
+end
+
+--- Typed text (after the keyboard layout is applied), for scenes with a text field.
+function App.textinput(t)
+    if blocked() then return end
+    if App.scene and App.scene.textinput then App.scene:textinput(t) end
 end
 
 return App

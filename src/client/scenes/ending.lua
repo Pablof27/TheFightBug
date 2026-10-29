@@ -104,7 +104,7 @@ end
 
 function Ending:again()
     Audio.play("ui_click")
-    self.app.switch("title")
+    self.app.switch("slots")
 end
 
 function Ending:mousepressed(x, y, b)

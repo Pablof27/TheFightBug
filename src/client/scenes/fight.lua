@@ -17,6 +17,7 @@ local HandView = require("client.fight.hand_view")
 local Hints = require("client.fight.hints")
 local L = require("client.fight.layout")
 local G = require("client.fight.geometry")
+local Saves = require("client.saves")
 
 local SimFight = require("sim.fight")
 local State = require("sim.state")
@@ -43,7 +44,7 @@ function Fight.new(app, params)
     self.enc, self.run = params.enc, params.run
     self.bet = Run.rivalBet(self.enc.rival)
     self.time = 0
-    self.state = SimFight.new(self.enc, { jar = self.run.jar, deck = self.run.deck, seed = (self.run.seed or 1) * 131 + (self.run.node or 1) })
+    self.state = SimFight.new(self.enc, { jar = self.run.jar, deck = self.run.deck, seed = Run.fightSeed(self.run) })
     if self.state.phase == "deploy" then
         local order = {}
         for _, sp in ipairs(self.enc.deploy or {}) do
@@ -585,11 +586,14 @@ function Fight:resultContinue()
     run.rewinds = (run.rewinds or 0) + self.rewinds
     local sum = Run.finish(run, self.state)
     if won and self.enc.boss then
+        Saves.finish(run, true)
         self.app.switch("ending", { run = run, won = true, sum = sum })
     elseif Run.over(run) then
         -- you can't cover the next rival's bet. Checked after any fight, not just losses, so the map is never a dead end.
+        Saves.finish(run, false)
         self.app.switch("ending", { run = run, won = false, sum = sum })
     else
+        Saves.store(run)
         self.app.switch("map", { run = run, sum = sum })
     end
 end
@@ -911,7 +915,9 @@ function Fight:drawConfirm()
     love.graphics.rectangle("fill", 0, 0, 1600, 900)
     Paper.panel(420, 300, 760, 330, { fill = { 0.9, 0.85, 1 }, seed = 77, r = 26, rot = -0.005, tape = true })
     Text.display("LEAVE THIS FIGHT?", 800, 340, 42, C.purple, "center")
-    Text.body("You will go back to the title screen. This run is lost.", 800, 420, 19, Text.INK, "center", nil)
+    local what = self.run.slot and "You will go back to the title screen. Your save is from just before this fight: it starts over when you come back."
+        or "You will go back to the title screen. This run is lost."
+    Text.body(what, 480, 410, 19, Text.INK, "center", 640)
     local r = self:confirmRects()
     for name, rect in pairs(r) do
         local hov = self.mouse.x >= rect.x and self.mouse.x <= rect.x + rect.w and self.mouse.y >= rect.y and self.mouse.y <= rect.y + rect.h

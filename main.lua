@@ -1,4 +1,4 @@
--- TheFightBug - LÖVE entry point.   Run:  love /path/to/TheFightBug
+-- TheFightBug - LÖVE entry point.   Run:  love /path/to/TheFightBug   (add --debug to pick the seed of a new game)
 -- All the game lives in src/: sim/ (pure simulation), data/ (content), client/ (what you see and hear).
 
 love.filesystem.setRequirePath("src/?.lua;src/?/init.lua;lib/?.lua;lib/knife/?.lua;" .. love.filesystem.getRequirePath())
@@ -14,7 +14,7 @@ function love.mousereleased(x, y, b, istouch) App.mousereleased(x, y, b) end
 function love.mousemoved(x, y, dx, dy) App.mousemoved(x, y) end
 function love.wheelmoved(x, y) App.wheelmoved(x, y) end
 function love.keypressed(key, scancode, isrepeat) App.keypressed(key, isrepeat) end
-function love.textinput(t) end
+function love.textinput(t) App.textinput(t) end
 
 -- Dev only: TFB_HARNESS=tests.harness love .   loads a script that can drive the game and take screenshots.
 local harness = os.getenv("TFB_HARNESS")

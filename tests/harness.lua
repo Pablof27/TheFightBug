@@ -1,7 +1,7 @@
 -- Dev-only screenshot / scripting harness. Not part of the game.
 --   TFB_HARNESS=tests.harness TFB_SCENARIO=/abs/path/scenario.lua love .
 -- A scenario is a Lua file returning function(H) that uses H.wait(frames), H.shot(name), H.click(x, y), H.move(x, y),
--- H.key(k), H.call(fn), H.quit(). Coordinates are virtual (1600x900). Screenshots land in the save directory.
+-- H.key(k), H.text(t), H.call(fn), H.quit(). Coordinates are virtual (1600x900). Screenshots land in the save directory.
 
 local App = require("client.app")
 local Screen = require("client.screen")
@@ -16,6 +16,7 @@ end
 
 -- only the scenario drives the game: real mouse / keyboard events are dropped
 love.mousemoved, love.mousepressed, love.mousereleased, love.keypressed = function() end, function() end, function() end, function() end
+love.textinput = function() end
 
 local function toWindow(x, y) return x * Screen.scale + Screen.ox, y * Screen.scale + Screen.oy end
 
@@ -31,6 +32,7 @@ function H.click(x, y, b)
     H.wait(1)
 end
 function H.key(k) App.keypressed(k, false); H.wait(1) end
+function H.text(t) App.textinput(t); H.wait(1) end
 function H.call(fn) return fn(App) end
 function H.scene() return App.scene end
 function H.quit() love.event.quit() end

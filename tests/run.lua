@@ -382,6 +382,96 @@ test("bugs need room in the Jar, a bigger Jar adds a slot, a nap needs a Tired b
     truthy(Shop.buy(run, nap)); eq(run.jar[1].tired, nil, "rested")
 end)
 
+print("Save files")
+
+local function same(a, b, path)
+    path = path or "run"
+    if type(a) ~= "table" or type(b) ~= "table" then
+        if a ~= b then error(path .. ": expected " .. tostring(b) .. ", got " .. tostring(a), 0) end
+        return
+    end
+    for k, v in pairs(b) do same(a[k], v, path .. "." .. tostring(k)) end
+    for k, v in pairs(a) do if b[k] == nil then error(path .. "." .. tostring(k) .. ": unexpected " .. tostring(v), 0) end end
+end
+
+-- The next fight of a run as the fight scene builds it, after the shuffle and the first draw.
+local function deal(run)
+    local s = Fight.new(require("sim.run").encounter(run), { jar = run.jar, deck = run.deck, seed = require("sim.run").fightSeed(run) })
+    Fight.autoDeploy(s)
+    truthy(Kid.start(s), "the fight starts")
+    return table.concat(s.hand, ",") .. " | " .. table.concat(s.deck, ",")
+end
+
+test("a saved run loads back exactly, so its seed deals the same fights", function()
+    local Run, Shop, Save = require("sim.run"), require("sim.shop"), require("sim.save")
+    local run = Run.new(123456789)
+    run.slot = 2
+    local s = sandbox(); s.winner = "kid"
+    Run.finish(run, s)
+    truthy(Shop.buy(run, itemOf(Shop, run, "leaf")))
+    run.jar[1].tired, run.rewinds = true, 4
+    local rec = assert(Save.decode(Save.encode({ run = run, savedAt = 1761745816 })))
+    eq(rec.savedAt, 1761745816); eq(rec.ended, nil, "still going")
+    eq(rec.run.slot, nil, "a file's slot is where it is, not what is in it")
+    run.slot = nil
+    same(rec.run, run)
+    eq(deal(rec.run), deal(run), "same seed, same shuffle")
+    local other = Save.decode(Save.encode({ run = run })).run
+    other.seed = 987654321
+    truthy(deal(other) ~= deal(run), "another seed shuffles another way")
+end)
+
+test("a finished day is kept as a record of how it ended", function()
+    local Run, Save = require("sim.run"), require("sim.save")
+    for _, won in ipairs({ true, false }) do
+        local rec = assert(Save.decode(Save.encode({ run = Run.new(9), ended = { won = won } })))
+        eq(rec.ended.won, won)
+    end
+end)
+
+test("damaged or hand-edited save files are reported, never trusted", function()
+    local Run, Save = require("sim.run"), require("sim.save")
+    local json = require("engine.utils.json")
+    for _, text in ipairs({ "", "hello", "42", "[1, 2, 3]", '{"version": 1, "run": ', '{"version": 1}' }) do
+        local rec, why = Save.decode(text)
+        eq(rec, nil, "decoded " .. text); truthy(type(why) == "string", "says why")
+    end
+    local good = Save.encode({ run = Run.new(5), savedAt = 1 })
+    truthy(Save.decode(good), "the untouched file is fine")
+    local function edited(change)
+        local data = json.decode(good)
+        change(data, data.run)
+        return Save.decode(json.encode(data))
+    end
+    local edits = {
+        ["another version"] = function(d) d.version = 99 end,
+        ["no run"] = function(d) d.run = "nope" end,
+        ["an unknown card"] = function(d, r) r.deck[1] = "laser" end,
+        ["an empty deck"] = function(d, r) r.deck = {} end,
+        ["an unknown bug"] = function(d, r) r.jar[1].species = "dragon" end,
+        ["a Jar fuller than its slots"] = function(d, r) r.jarSlots = 2 end,
+        ["two bugs with one uid"] = function(d, r) r.jar[2].uid = r.jar[1].uid end,
+        ["a uid from the future"] = function(d, r) r.jar[1].uid = r.nextUid end,
+        ["negative marbles"] = function(d, r) r.marbles = -1 end,
+        ["half a marble"] = function(d, r) r.marbles = 2.5 end,
+        ["a fight that does not exist"] = function(d, r) r.node = #Run.NODES + 1 end,
+        ["a seed out of range"] = function(d, r) r.seed = Run.SEED_MAX + 1 end,
+        ["a Journal page of no species"] = function(d, r) r.seen.dragon = true end,
+        ["a strange ending"] = function(d) d.ended = { won = "yes" } end,
+        ["a strange date"] = function(d) d.savedAt = "yesterday" end,
+    }
+    for what, change in pairs(edits) do
+        local rec, why = edited(change)
+        eq(rec, nil, what); truthy(type(why) == "string", what .. " says why")
+    end
+end)
+
+test("seeds stay in the range the generator handles exactly", function()
+    local Run = require("sim.run")
+    truthy(Run.fightSeed({ seed = Run.SEED_MAX, node = #Run.NODES }) * 48271 < 2 ^ 53, "the generator's first step is exact in doubles")
+    eq(Run.fightSeed(Run.new(7)), 7 * 131 + 1, "the old fixed seed still deals the old first fight")
+end)
+
 print("Determinism")
 
 test("same inputs, same fight (event log hash)", function()

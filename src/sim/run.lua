@@ -12,6 +12,9 @@ Run.STARTER_DECK = { "flick", "flick", "flick", "crumb", "crumb", "stick", "stic
 Run.NODES = { "sandbox", "lawn", "stump" }
 Run.JAR_SLOTS = 6            -- at the start of the day; the Swap Shop sells a bigger Jar
 Run.START_MARBLES = 5
+-- Seeds have up to 9 digits: a fight is seeded with Run.fightSeed (seed * 131 + node), and the generator's first step
+-- (sim/util.lua) multiplies that by 48271, which has to stay below 2^53 to be exact in LuaJIT's doubles.
+Run.SEED_MAX = 999999999
 
 function Run.new(seed)
     local deck = {}
@@ -37,6 +40,9 @@ function Run.new(seed)
 end
 
 function Run.currentEncounter(run) return Run.NODES[run.node] end
+
+--- The seed of the next fight's random generator (its deck shuffles): the run's seed and which fight it is.
+function Run.fightSeed(run) return (run.seed or 1) * 131 + (run.node or 1) end
 
 --- The encounter table of the next fight.
 function Run.encounter(run)
