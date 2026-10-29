@@ -1,4 +1,5 @@
 -- The rival kid's off-board signature move (GDD §5.12): its own timer, shown in advance like any bug's intent.
+-- It follows the bugs' clock rule: at 0 it is due, and it happens on the next tick (after all the bugs have acted).
 
 local U = require("sim.util")
 local Grid = require("sim.grid")
@@ -16,7 +17,7 @@ end
 
 function Rival.countdown(s)
     local r = s.rival
-    if r and r.timer > 0 then r.timer = r.timer - 1 end
+    if r then r.timer = r.timer - 1 end      -- 0 -> -1: his move is due this tick
 end
 
 --- Stomp aims at the 3x3 area covering the most of YOUR bugs (then the fewest of his own, then reading order).
@@ -97,10 +98,10 @@ function Moves.buy(s)
     if p then spawn(s, species, p.x, p.y) end
 end
 
---- At 0 the rival kid does his thing, after all the bugs have acted.
+--- Once his timer has run past 0 the rival kid does his thing, after all the bugs have acted.
 function Rival.act(s)
     local r = s.rival
-    if not r or r.timer > 0 then return end
+    if not r or r.timer >= 0 then return end
     Moves[r.kind](s)
     r.timer = r.base
     State.emit(s, "rival_timer", { timer = r.timer })

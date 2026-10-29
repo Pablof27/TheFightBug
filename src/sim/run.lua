@@ -1,18 +1,17 @@
--- The run layer (GDD §8, trimmed for the demo): the kid's Jar, deck and Spirit across a morning at the park.
--- Pure Lua like the rest of sim/, so it can be tested headlessly.
+-- The run layer (GDD §8, trimmed for the demo): the kid's Jar, deck and marbles across a morning at the park.
+-- Marbles are the stakes: every rival kid plays for a fixed bet (data/rivals.lua), you put up the same, and the winner
+-- takes the pot. Marbles also buy cards and bugs at the Swap Shop (sim/shop.lua). If you can't cover the next rival's
+-- bet, nobody will play with you and the day is over. Pure Lua like the rest of sim/, so it can be tested headlessly.
+
+local Encounters = require("data.encounters")
+local Rivals = require("data.rivals")
 
 local Run = {}
 
 Run.STARTER_DECK = { "flick", "flick", "flick", "crumb", "crumb", "stick", "stick", "shadow", "sun", "water" }
 Run.NODES = { "sandbox", "lawn", "stump" }
-Run.JAR_SLOTS = 6
-Run.MAX_SPIRIT_LOSS = 3      -- demo only: the GDD has no cap (see design/02-demo-decisions.md, DD-72)
-
--- Rewards are scripted per fight so every demo plays the same way (the GDD draws them at random from a seeded pool).
-Run.REWARDS = {
-    sandbox = { cards = { "shove", "juice", "blow" }, bets = { "stag", "wasp" }, marbles = 3 },
-    lawn = { cards = { "tap", "leaf", "pebble" }, bets = { "redant" }, marbles = 3 },
-}
+Run.JAR_SLOTS = 6            -- at the start of the day; the Swap Shop sells a bigger Jar
+Run.START_MARBLES = 5
 
 function Run.new(seed)
     local deck = {}
@@ -28,8 +27,9 @@ function Run.new(seed)
             { uid = 4, species = "cricket" },
             { uid = 5, species = "spider" },
         },
-        nextUid = 6,
-        spirit = 10, maxSpirit = 10, marbles = 0,
+        nextUid = 6, jarSlots = Run.JAR_SLOTS,
+        marbles = Run.START_MARBLES,
+        bought = {},    -- Swap Shop items already sold, by key (sim/shop.lua)
         node = 1, wins = 0, losses = 0,
         seen = {},      -- species met so far (Bug Journal)
         released = {},  -- species let go at sunset
@@ -38,10 +38,25 @@ end
 
 function Run.currentEncounter(run) return Run.NODES[run.node] end
 
---- Fold a finished fight into the run: tired / escaped bugs, Spirit, marbles, Journal entries.
---- Returns a summary table for the results screen.
+--- The encounter table of the next fight.
+function Run.encounter(run)
+    local id = Run.currentEncounter(run)
+    for _, e in ipairs(Encounters) do if e.id == id then return e end end
+end
+
+--- What a rival kid bets, and so what you must put in the pot to fight them.
+function Run.rivalBet(rivalId) return Rivals[rivalId].bet end
+
+--- The bet of the next fight.
+function Run.bet(run) return Run.rivalBet(Run.encounter(run).rival) end
+
+function Run.canCover(run) return run.marbles >= Run.bet(run) end
+
+--- Fold a finished fight into the run: the pot, tired / escaped bugs, Journal entries, and the next node after a win.
+--- Returns a summary table for the screens that follow (marbles = what your marble count changed by).
 function Run.finish(run, s)
-    local sum = { won = s.winner == "kid", tired = {}, escaped = {}, spirit = 0, marbles = 0, newSpecies = {} }
+    local bet = Run.rivalBet(s.rival.id)
+    local sum = { won = s.winner == "kid", why = s.why, rival = s.rival.id, tired = {}, escaped = {}, bet = bet, pot = 2 * bet, marbles = 0, newSpecies = {} }
     for i = #run.jar, 1, -1 do
         local e = run.jar[i]
         local f = s.field[e.uid]
@@ -68,34 +83,38 @@ function Run.finish(run, s)
     end
     if sum.won then
         run.wins = run.wins + 1
-        local r = Run.REWARDS[s.encounter]
-        sum.marbles = r and r.marbles or 5
-        run.marbles = run.marbles + sum.marbles
+        sum.marbles = bet                       -- the pot: your bet back plus the rival's
+        run.marbles = run.marbles + bet
+        if run.node < #Run.NODES then run.node = run.node + 1 else sum.last = true end
     else
         run.losses = run.losses + 1
-        local left = 0
-        for _, b in ipairs(s.bugs) do if b.side == "rival" then left = left + 1 end end
-        sum.spirit = -math.min(Run.MAX_SPIRIT_LOSS, math.max(1, left))
-        run.spirit = math.max(0, run.spirit + sum.spirit)
+        sum.marbles = -bet
+        run.marbles = math.max(0, run.marbles - bet)
     end
     return sum
 end
 
 function Run.addCard(run, card) run.deck[#run.deck + 1] = card end
 
---- A caught or won bug joins the Jar (if there is room).
+--- A bought bug joins the Jar (if there is room).
 function Run.addBug(run, species)
-    if #run.jar >= Run.JAR_SLOTS then return false end
+    if #run.jar >= run.jarSlots then return false end
     run.jar[#run.jar + 1] = { uid = run.nextUid, species = species }
     run.nextUid = run.nextUid + 1
     return true
 end
 
---- Tired bugs get a rest (a Bench, a Band-Aid…): they are healthy again.
+function Run.anyTired(run)
+    for _, e in ipairs(run.jar) do if e.tired then return true end end
+    return false
+end
+
+--- Tired bugs get a rest (a nap on the bench): they are healthy again.
 function Run.rest(run)
     for _, e in ipairs(run.jar) do e.tired = nil end
 end
 
-function Run.over(run) return run.spirit <= 0 end
+--- The day is over when you can't cover the next rival's bet: nobody plays with a kid who can't pay up.
+function Run.over(run) return not Run.canCover(run) end
 
 return Run

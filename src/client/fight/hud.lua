@@ -27,6 +27,7 @@ local function wrapBody(str, x, y, size, limit, color, align)
 end
 
 -- ───────────────────────── timeline ─────────────────────────
+-- Columns by timer: READY ambushers first, then 0 (framed: they act on the next tick), then 1, 2, 3...
 function Hud.timeline(scene, add, time)
     local P = L.timeline
     Paper.panel(P.x, P.y, P.w, P.h, { fill = C.cream, seed = 3, r = 16, tape = true })
@@ -36,11 +37,11 @@ function Hud.timeline(scene, add, time)
         local a = scene.actorById[b.id]
         if not (a and a.gone) then
             local ready = a and a.ready or b.ready
-            local t = ready and 0 or (a and a.timer or b.timer)
+            local t = ready and -1 or math.max(0, a and a.timer or b.timer)
             items[#items + 1] = { kind = "bug", id = b.id, species = b.species, side = b.side, t = t, key = Q.orderKey(b), ready = ready }
         end
     end
-    if s.rival then items[#items + 1] = { kind = "rival", t = scene.disp.rivalTimer or s.rival.timer, key = 900000 } end
+    if s.rival then items[#items + 1] = { kind = "rival", t = math.max(0, scene.disp.rivalTimer or s.rival.timer), key = 900000 } end
     table.sort(items, function(a, b) if a.t ~= b.t then return a.t < b.t end return a.key < b.key end)
 
     Text.display("WHO ACTS", P.x + 16, P.y + 12, 12, { 0.45, 0.25, 0.55 })
@@ -55,10 +56,10 @@ function Hud.timeline(scene, add, time)
         local j = i
         while j <= #items and items[j].t == t do j = j + 1 end
         local n = j - i
-        local colW = math.max(t == 0 and 104 or 60, 12 + n * 46)
+        local colW = math.max(t < 0 and 104 or t == 0 and 132 or 60, 12 + n * 46)
         if x + colW > P.x + P.w - 10 then break end
         -- column header
-        if t == 1 then
+        if t == 0 then
             love.graphics.setLineWidth(4)
             love.graphics.setColor(C.yellow[1], C.yellow[2], C.yellow[3], 0.9)
             love.graphics.rectangle("line", x - 6, P.y + 6, colW, P.h - 12, 12, 12)
@@ -66,12 +67,13 @@ function Hud.timeline(scene, add, time)
             love.graphics.rectangle("fill", x - 6, P.y + 6, colW, P.h - 12, 12, 12)
         end
         love.graphics.setColor(1, 1, 1, 1)
-        if t == 0 then
+        if t < 0 then
             icon("icon_eye", x + 10, P.y + 17, 22)
             Text.display("READY", x + 24, P.y + 10, 13, { 0.45, 0.25, 0.55 }, "left")
         else
             icon("icon_hourglass", x + 10, P.y + 17, 22)
             Text.display(tostring(t), x + 24, P.y + 8, 17, { 0.3, 0.12, 0.4 }, "left")
+            if t == 0 then Text.display("NEXT TICK", x + 42, P.y + 11, 11, C.magentaDark, "left") end
         end
         for k = i, j - 1 do
             local it = items[k]
@@ -138,14 +140,21 @@ function Hud.rival(scene, add, time)
     Text.display(rv.name, P.x + 196, P.y + 20, 24, INK, "left", P.w - 206)
     Text.body(rv.short, P.x + 196, P.y + 90, 14, { 0.35, 0.2, 0.45 }, "left", P.w - 210)
     Text.display("THE RIVAL", P.x + 196, P.y + 60, 12, C.magentaDark)
+    -- the stakes of this fight
+    if scene.bet then
+        love.graphics.setColor(1, 1, 1, 1)
+        icon("icon_marble", P.x + 210, P.y + 157, 26)
+        Text.display("POT: " .. (2 * scene.bet) .. " MARBLES", P.x + 228, P.y + 147, 17, INK, "left", P.w - 240)
+        Text.body("You each bet " .. scene.bet .. ". Winner takes all.", P.x + 196, P.y + 174, 11, { 0.4, 0.25, 0.5 }, "left", P.w - 206)
+    end
     -- signature move
     local sy = P.y + 204
     Paper.panel(P.x + 12, sy, P.w - 24, 104, { fill = { 1, 0.9, 0.95 }, seed = 9, r = 14, line = 3, shadow = false })
-    local timer = scene.disp.rivalTimer or s.rival.timer
+    local timer = math.max(0, scene.disp.rivalTimer or s.rival.timer)
     Paper.disc(P.x + 54, sy + 52, 28, C.magenta, { seed = 4, shadow = true, line = 3.5 })
     Text.display(tostring(timer), P.x + 54, sy + 38, 28, { 1, 1, 1 }, "center")
     Text.display(rv.sig.name, P.x + 96, sy + 8, 18, INK, "left", P.w - 128)
-    Text.display("SIGNATURE MOVE", P.x + 96, sy + 36, 9, C.magentaDark, "left")
+    Text.display(timer == 0 and "SIGNATURE MOVE - NEXT TICK!" or "SIGNATURE MOVE", P.x + 96, sy + 36, 9, C.magentaDark, "left")
     Text.body(rv.sig.text, P.x + 96, sy + 50, 12, INK, "left", P.w - 124)
     add("rivalsig", P.x + 12, sy, P.w - 24, 104, {})
 end
@@ -179,7 +188,8 @@ function Hud.rule(scene, add, time)
         local nextSp
         for _, sp in ipairs(s.rule.spawns) do if sp.tick > s.tick and (not nextSp or sp.tick < nextSp.tick) then nextSp = sp end end
         if nextSp then
-            Text.body("Next crumbs in " .. (nextSp.tick - s.tick) .. " ticks", P.x + 18, y + 4, 13, { 0.15, 0.5, 0.4 })
+            local soon = nextSp.tick == s.tick + 1
+            Text.body("Next crumbs land on tick " .. nextSp.tick .. (soon and ": the next one!" or "."), P.x + 18, y + 4, 13, { 0.15, 0.5, 0.4 })
         end
     else
         local rv = Q.count(s, "rival")
@@ -292,7 +302,7 @@ function Hud.inspector(scene, add, time)
     else
         Text.display("READ THE BUGS", P.x + 26, P.y + 26, 26, INK, "left", P.w - 52)
         Text.body("Hover any bug to see what it will do, why, and what it is in real life.", P.x + 26, P.y + 74, 16, INK, "left", P.w - 52)
-        Text.body("You never give orders. Cards change the world, and every bug follows its instinct when its timer hits zero.", P.x + 26, P.y + 146, 14, { 0.4, 0.25, 0.5 }, "left", P.w - 180)
+        Text.body("You never give orders. Cards change the world, and every bug follows its instinct: a bug at 0 acts on the next tick.", P.x + 26, P.y + 146, 14, { 0.4, 0.25, 0.5 }, "left", P.w - 180)
         love.graphics.setColor(1, 1, 1, 1)
         Assets.bug.mantis:draw("idle1", P.x + P.w - 72, P.y + P.h - 14, 0, 0.55)
     end
@@ -308,28 +318,32 @@ function Hud.jar(scene, add, time)
     local deploy = s.phase == "deploy"
     Text.display(deploy and "PICK YOUR TEAM" or "THE JAR", P.x + 76, P.y + 14, 22, INK, "left")
     Text.body(deploy and ("Free: place up to 3 on your two rows (" .. Kid.deployedCount(s) .. "/3)") or "Release for time: Light 1, Medium 2, Heavy 3.", P.x + 76, P.y + 44, 12.5, { 0.15, 0.4, 0.45 }, "left", P.w - 90)
-    local cols, cw, chh = 2, 188, 58
+    -- 3 rows of 2 fit the panel; a Jar made bigger at the Swap Shop gets compact rows
+    local compact = #s.jar > 6
+    local cols, cw, chh = 2, 188, compact and 40 or 58
+    local top, gap = compact and 72 or 78, compact and 4 or 6
+    local k = chh / 58
     for i, e in ipairs(s.jar) do
         local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
-        local x, y = P.x + 12 + col * (cw + 4), P.y + 78 + row * (chh + 6)
+        local x, y = P.x + 12 + col * (cw + 4), P.y + top + row * (chh + gap)
         local sp = Bugs[e.species]
         local armed = scene.armedJar == i
         local hov = scene.hover.jar == i
         Paper.panel(x, y, cw, chh, { fill = armed and C.yellow or (hov and { 1, 1, 1 } or C.cream), seed = 20 + i, r = 12, line = 3, shadow = not hov, rot = (i % 2 == 0) and 0.01 or -0.01 })
         love.graphics.setColor(1, 1, 1, 1)
-        Assets.drawPortrait(e.species, x + 30, y + 30, 48)
-        Text.display(sp.short, x + 58, y + 9, 13, INK, "left", cw - 58 - 60)
-        Text.display(sp.role, x + 58, y + 32, 9.5, { 0.45, 0.25, 0.55 }, "left", cw - 58 - 60)
+        Assets.drawPortrait(e.species, x + 30 * k, y + chh / 2, 48 * k)
+        Text.display(sp.short, x + 58 * k, y + 9 * k, 13, INK, "left", cw - 58 * k - 60)
+        if not compact then Text.display(sp.role, x + 58, y + 32, 9.5, { 0.45, 0.25, 0.55 }, "left", cw - 58 - 60) end
         if e.tired then
             love.graphics.setColor(1, 1, 1, 1)
-            Assets.ui:draw("fx_zzz", x + cw - 56, y + 18, 0, 0.22)
+            Assets.ui:draw("fx_zzz", x + cw - 56, y + 18 * k, 0, 0.22 * k)
         end
         if deploy then
-            Text.display("FREE", x + cw - 12, y + 40, 12, C.tealDark, "right")
+            Text.display("FREE", x + cw - 12, y + chh - 18, 12, C.tealDark, "right")
         else
             love.graphics.setColor(1, 1, 1, 1)
-            icon("icon_hourglass", x + cw - 24, y + 22, 26)
-            Text.display(tostring(Kid.releaseCost(e.species)), x + cw - 40, y + 12, 18, INK, "right")
+            icon("icon_hourglass", x + cw - 24, y + chh / 2 - 7 * k, 26 * k)
+            Text.display(tostring(Kid.releaseCost(e.species)), x + cw - 40, y + chh / 2 - 17 * k, 18 * k, INK, "right")
         end
         add("jar", x, y, cw, chh, { index = i })
     end

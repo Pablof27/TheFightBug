@@ -1,7 +1,10 @@
--- The clock (GDD §5.3). There are no turns: the clock only moves when the kid spends time.
--- One tick:  1. every timer goes down by 1 (Ready ambushers stay at 0, so do the rival's signature timer rules)
---            2. every bug at 0 acts, your bugs first, then the rival's, each side in reading order, then the rival kid
+-- The clock (GDD §5.3, demo rules DD-32/DD-33). There are no turns: the clock only moves when the kid spends time.
+-- A timer counts the ticks a bug still has to wait. A bug at 0 acts on the NEXT tick, then goes back to its base timer.
+-- One tick:  1. every timer goes down by 1; whoever was already at 0 is due and acts this tick (Ready ambushers stay
+--               at 0 and only strike by reaction; the rival kid's signature move counts down the same way)
+--            2. due bugs act, your bugs first, then the rival's, each side in reading order, then the rival kid
 --            3. you draw 1 card   4. effects wear off, crumbs appear, the Rule is checked
+-- While a tick resolves a due timer is -1. That value is never shown (events report 0) and never survives the tick.
 
 local State = require("sim.state")
 local Q = require("sim.query")
@@ -12,6 +15,11 @@ local Rules = require("sim.rules")
 local Deck = require("sim.deck")
 
 local Clock = {}
+
+--- Is this bug acting in the tick that is being resolved?  (it was at 0 when the tick started)
+function Clock.due(b)
+    return b.timer < 0 and not b.ready and not b.acted and not b.gone
+end
 
 --- One bug wakes up: gets up if flipped, otherwise follows its instinct.
 function Clock.activate(s, bug)
@@ -36,11 +44,11 @@ function Clock.tick(s)
     local timers = {}
     for _, b in ipairs(s.bugs) do
         b.acted = false
-        if b.timer > 0 then b.timer = b.timer - 1 end
-        timers[#timers + 1] = { id = b.id, timer = b.timer }
+        if not b.ready then b.timer = b.timer - 1 end
+        timers[#timers + 1] = { id = b.id, timer = math.max(0, b.timer) }
     end
     Rival.countdown(s)
-    State.emit(s, "timers", { list = timers, rival = s.rival and s.rival.timer })
+    State.emit(s, "timers", { list = timers, rival = s.rival and math.max(0, s.rival.timer) })
 
     R.sweepReady(s)
     local guard = 0
@@ -49,7 +57,7 @@ function Clock.tick(s)
         if guard > 100 then break end
         local pick
         for _, b in ipairs(Q.timeline(s)) do
-            if b.timer == 0 and not b.ready and not b.acted then pick = b break end
+            if Clock.due(b) then pick = b break end
         end
         if not pick then break end
         Clock.activate(s, pick)
@@ -62,6 +70,9 @@ function Clock.tick(s)
     Deck.draw(s, 1)
     Rules.endOfTick(s)
     Rules.check(s)
+    -- only a fight that ended halfway through the tick can leave someone due: they never got to act
+    for _, b in ipairs(s.bugs) do if b.timer < 0 then b.timer = 0 end end
+    if s.rival and s.rival.timer < 0 then s.rival.timer = 0 end
     if not s.winner and s.tick >= s.sunLimit then Rules.timeout(s) end
 end
 

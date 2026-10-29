@@ -19,27 +19,31 @@ R.TRAIL_TTL = 6
 
 -- ───────────────────────── timers ─────────────────────────
 
---- A bug's timer after it acted: its base, +1 in shade, -1 in sun (never below 1).
+--- A bug's timer after it acted: its base, +1 in shade, -1 in sun (never below 0: at the soonest it acts on the next tick).
 function R.resetTimer(s, bug)
     local mod, why = 0, "reset"
     local c = Grid.cell(s, bug.x, bug.y)
     if c and c.light == "shade" then mod, why = 1, "shade"
     elseif c and c.light == "sun" then mod, why = -1, "sun" end
-    bug.timer = math.max(1, bug.baseTimer + mod)
+    bug.timer = math.max(0, bug.baseTimer + mod)
     State.emit(s, "timer", { id = bug.id, timer = bug.timer, delta = bug.timer, why = why, reset = true })
 end
 
---- +delay hits anything (a Ready ambusher loses its readiness); speed-ups never go below 1 and never wake a Ready bug.
+--- +delay hits anything (a Ready ambusher loses its readiness); speed-ups never go below 0 (the bug acts on the next tick,
+--- never "now") and never wake a Ready bug. A bug that is due this tick (-1) or Ready and gets +N acts N ticks later.
 function R.addTimer(s, bug, delta, why)
     if bug.gone then return end
     if delta < 0 then
-        if bug.ready or bug.timer <= 1 then return end
-        bug.timer = math.max(1, bug.timer + delta)
+        if bug.ready or bug.timer <= 0 then return end
+        bug.timer = math.max(0, bug.timer + delta)
     else
+        if bug.ready then
+            bug.ready = false
+            bug.timer = -1      -- Ready means "would act right now": +1 makes it act on the next tick
+        end
         bug.timer = bug.timer + delta
-        bug.ready = false
     end
-    State.emit(s, "timer", { id = bug.id, timer = bug.timer, delta = delta, why = why })
+    State.emit(s, "timer", { id = bug.id, timer = math.max(0, bug.timer), delta = delta, why = why })
 end
 
 -- ───────────────────────── arrival / reactions ─────────────────────────
@@ -162,7 +166,7 @@ end
 
 function R.flip(s, b)
     b.flipped = true
-    if b.ready then b.ready = false; b.timer = 1 end
+    if b.ready then b.ready = false; b.timer = 0 end
     State.emit(s, "flip", { id = b.id })
 end
 

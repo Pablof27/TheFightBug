@@ -25,7 +25,7 @@ function B.invariants(s)
         assert(not b.gone, "removed bug still listed")
         local c = Grid.cell(s, b.x, b.y)
         assert(c and not c.void, "bug on a void tile")
-        assert(not (c.block == "pebble" or c.block == "knot"), "bug inside an obstacle " .. b.species .. " at " .. Grid.name(b.x, b.y))
+        assert(not c.block, "bug inside an obstacle (" .. tostring(c.block) .. ") " .. b.species .. " at " .. Grid.name(b.x, b.y))
         if b.ready then assert(b.timer == 0, "ready bug with timer " .. b.timer) end
     end
     for k, b in pairs(s.occ) do assert(seen[k] == b, "stale occupancy") end
@@ -121,7 +121,7 @@ function B.choose(s, policy)
     return best or acts[1]
 end
 
--- The player's collection when they reach each fight (what the scripted rewards would have given them)
+-- The player's collection when they reach each fight (a plausible set of Swap Shop buys)
 function B.setup(enc, seed)
     local run = Run.new(seed)
     if enc.id == "lawn" then Run.addCard(run, "shove") end

@@ -159,34 +159,49 @@ function Actor:drawSprite(hidden)
     end
 end
 
---- The little numbers: timer bubble above, hearts below. Drawn after all sprites.
-function Actor:drawBadges(highlight)
+--- The badge strip on the ground under the bug: [timer] [hearts] [what it will do]. It stays inside the bug's own tile
+--- whatever the species' height, so a tall or flying bug never carries its numbers up into the tile above.
+function Actor:badgeLayout()
     local fx, fy = G.foot(self.x, self.y)
     fx, fy = fx + self.offx, fy + self.offy
     local T, u = G.T, G.unit
-    local lift = self.z + math.sin(math.pi * self.hopT) * self.hopH + (self:isFlying() and 24 * u or 0)
-    local by = fy - (self:height() * T + 6 * u) - lift
-    local bx = fx + T * 0.3
-    local col = self.side == "kid" and Paper.C.teal or Paper.C.magenta
-    local r = 15 * u * (1 + 0.14 * self.pulse) * (highlight and 1.12 or 1)
-    if self.timer == 1 and not self.ready then r = r * (1 + 0.06 * math.sin(love.timer.getTime() * 7)) end
+    local n = math.max(1, self.maxHp or 1)
+    local hs = 5.8 * u
+    local gap = hs * (n >= 5 and 1.8 or 2.05)
+    local hw = (n - 1) * gap / 2 + hs
+    local r = 13 * u
+    local pad = 3 * u
+    return { fx = fx, y = fy + T * 0.19, hs = hs, gap = gap, r = r, timerX = fx - hw - pad - r, chipX = fx + hw + pad + r }
+end
+
+--- Timer (left of the hearts) and hearts. Drawn after all sprites. The action icon on the right is drawn by intent_view.lua.
+function Actor:drawBadges(highlight)
+    local L = self:badgeLayout()
+    local u = G.unit
     local a = self.alpha
-    local fill = { col[1], col[2], col[3], a }
-    Paper.disc(bx, by, r, fill, { seed = self.id, shadow = true, line = 3.5 * u })
-    local label = self.ready and "!" or tostring(self.timer)
-    local sz = 19 * u
-    Text.display(label, bx, by - sz / 2, sz, { 1, 1, 1, a }, "center")
+    local col = self.side == "kid" and Paper.C.teal or Paper.C.magenta
+    local timer = math.max(0, self.timer or 0)
+    local soon = not self.ready and timer == 0       -- acts on the next tick
+    local r = L.r * (1 + 0.14 * self.pulse) * (highlight and 1.12 or 1)
+    if soon then
+        r = r * (1 + 0.06 * math.sin(love.timer.getTime() * 7))
+        local yc = Paper.C.yellow
+        love.graphics.setColor(Paper.C.ink[1], Paper.C.ink[2], Paper.C.ink[3], 0.9 * a)
+        love.graphics.circle("fill", L.timerX, L.y, r + 6.5 * u)
+        love.graphics.setColor(yc[1], yc[2], yc[3], a)
+        love.graphics.circle("fill", L.timerX, L.y, r + 4.5 * u)
+    end
+    Paper.disc(L.timerX, L.y, r, { col[1], col[2], col[3], a }, { seed = self.id, shadow = not soon, line = 3 * u })
+    local label = self.ready and "!" or tostring(timer)
+    local sz = 17 * u
+    Text.display(label, L.timerX, L.y - sz / 2, sz, { 1, 1, 1, a }, "center")
     if self.soaked then
         love.graphics.setColor(1, 1, 1, a)
-        Assets.ui:draw("fx_drop", bx - 28 * u, by + 2, 0, 0.2 * u)
+        Assets.ui:draw("fx_drop", L.timerX - r * 0.95, L.y - r * 1.05, 0, 0.17 * u)
     end
-    -- hearts
-    local n = self.maxHp
-    local hs = 6.2 * u
-    local gap = hs * 2.1
-    local x0 = fx - (n - 1) * gap / 2
-    for i = 1, n do
-        Paper.heart(x0 + (i - 1) * gap, fy + T * 0.2, hs, nil, i > self.hp)
+    local x0 = L.fx - (self.maxHp - 1) * L.gap / 2
+    for i = 1, self.maxHp do
+        Paper.heart(x0 + (i - 1) * L.gap, L.y, L.hs, nil, i > self.hp)
     end
 end
 

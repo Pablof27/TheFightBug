@@ -93,9 +93,10 @@ end
 function H.timers(d, ev)
     for _, e in ipairs(ev.list) do
         local a = actorOf(d, e.id)
-        if a and a.timer ~= e.timer then a.timer = e.timer; a.pulse = 1 end
+        local t = math.max(0, e.timer)
+        if a and a.timer ~= t then a.timer = t; a.pulse = 1 end
     end
-    if ev.rival then d.scene.disp.rivalTimer = ev.rival end
+    if ev.rival then d.scene.disp.rivalTimer = math.max(0, ev.rival) end
     return 0
 end
 
@@ -292,13 +293,15 @@ local WHY = { bump = "DAZED", stomp = "STOMPED", shadow = "SHADE", soak = "SOAKE
 function H.timer(d, ev)
     local a = actorOf(d, ev.id)
     if not a then return 0 end
-    if a.timer ~= ev.timer then a.pulse = 1 end
-    a.timer = ev.timer
-    a.ready = (ev.timer == 0) and a.ready
+    local t = math.max(0, ev.timer)
+    if a.timer ~= t then a.pulse = 1 end
+    a.timer = t
+    a.ready = false                     -- a timer event always means the bug is (no longer) waiting in ambush
     if ev.reset then return 0 end
-    local x, y = head(a)
+    -- floating feedback next to the timer badge; a speed-up says so in words, never as a negative number
+    local L = a:badgeLayout()
     local plus = ev.delta > 0
-    Fx.text((plus and "+" or "") .. ev.delta, x + G.T * 0.32, y - 24, plus and C.magenta or C.green, 22, { life = 1.0 })
+    Fx.text(plus and ("+" .. ev.delta) or "FASTER!", L.timerX, L.y - L.r - 14 * G.unit, plus and C.magenta or C.green, plus and 22 or 18, { life = 1.0 })
     if ev.why == "bump" or ev.why == "tap" then Audio.play("daze", 0.5) end
     return 0.1
 end

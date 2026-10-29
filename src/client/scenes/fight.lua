@@ -41,6 +41,7 @@ function Fight.new(app, params)
     local self = setmetatable({}, Fight)
     self.app = app
     self.enc, self.run = params.enc, params.run
+    self.bet = Run.rivalBet(self.enc.rival)
     self.time = 0
     self.state = SimFight.new(self.enc, { jar = self.run.jar, deck = self.run.deck, seed = (self.run.seed or 1) * 131 + (self.run.node or 1) })
     if self.state.phase == "deploy" then
@@ -180,7 +181,9 @@ function Fight:onPlaybackDone()
     if self.pendingEnd then
         local ev = self.pendingEnd
         self.pendingEnd = nil
-        self.result = { winner = ev.winner, why = ev.why, t = 0 }
+        -- decided now, before CONTINUE settles the bet: the banner stays on screen during the scene transition
+        local lastFight = ev.winner ~= "kid" and self.run.marbles - self.bet < self.bet
+        self.result = { winner = ev.winner, why = ev.why, t = 0, lastFight = lastFight }
         self.rivalMood = ev.winner == "rival" and "happy" or "sad"
         Audio.play(ev.winner == "kid" and "win" or "lose")
         if ev.winner == "kid" then
@@ -580,20 +583,11 @@ function Fight:resultContinue()
     local run = self.run
     local won = self.result.winner == "kid"
     run.rewinds = (run.rewinds or 0) + self.rewinds
-    if not won and self.enc.tutorial then
-        -- the first fight is a lesson, not a punishment: no Spirit lost, nobody tired, just try again
-        self.app.switch("fight", { enc = self.enc, run = run })
-        return
-    end
     local sum = Run.finish(run, self.state)
-    if won then
-        if self.enc.boss then
-            self.app.switch("ending", { run = run, won = true, sum = sum })
-        else
-            run.node = run.node + 1
-            self.app.switch("reward", { run = run, enc = self.enc, sum = sum })
-        end
+    if won and self.enc.boss then
+        self.app.switch("ending", { run = run, won = true, sum = sum })
     elseif Run.over(run) then
+        -- you can't cover the next rival's bet. Checked after any fight, not just losses, so the map is never a dead end.
         self.app.switch("ending", { run = run, won = false, sum = sum })
     else
         self.app.switch("map", { run = run, sum = sum })
@@ -726,7 +720,7 @@ function Fight:boardOverlays()
     -- rival signature move: where it will land
     local peek = self.forecast and self.forecast.rival
     if peek and peek.tiles and self.state.phase == "fight" and not self.director.playing then
-        local danger = peek.timer <= 2
+        local danger = peek.timer <= 1
         for _, tl in ipairs(peek.tiles) do
             if peek.kind == "stomp" then
                 BV.tileGlow(tl.x, tl.y, "danger", t, danger and 0.9 or 0.35)
@@ -738,7 +732,7 @@ function Fight:boardOverlays()
             end
         end
     end
-    -- next crumbs
+    -- next crumbs, with a countdown that reads like a timer (0 = they land on the next tick)
     if s.rule.id == "crumbs" and self.state.phase == "fight" then
         local nextTick
         for _, sp in ipairs(s.rule.spawns) do if sp.tick > s.tick and (not nextTick or sp.tick < nextTick) then nextTick = sp.tick end end
@@ -747,7 +741,7 @@ function Fight:boardOverlays()
                 local cx, cy = G.center(sp.x, sp.y)
                 love.graphics.setColor(1, 1, 1, 0.38)
                 Assets.tiles:draw("loot", cx, cy + G.T * 0.3, 0, G.T / 200 * 0.7)
-                Text.display(tostring(sp.tick - s.tick), cx, cy - G.T * 0.1, 22 * G.unit, { 1, 1, 1, 0.9 }, "center")
+                Text.display(tostring(sp.tick - s.tick - 1), cx, cy - G.T * 0.1, 22 * G.unit, { 1, 1, 1, 0.9 }, "center")
             end
         end
     end
@@ -790,13 +784,13 @@ function Fight:drawWorld()
     for _, a in ipairs(self.actors) do a.hiddenFlag = hidden[a.id] end
     BV.props(self.view, self.actors, hidden, self.time, self:extraProps())
     -- intent arrows
-    if self.showIntents and not self.director.playing and self.state.phase == "fight" then
-        local f = (self.preview and self.preview.forecast) or self.forecast
-        if f then Intent.draw(self, f, self.hover.bug, self.preview and self.preview.changed, self.time) end
-    end
+    local intents = self.showIntents and not self.director.playing and self.state.phase == "fight"
+        and ((self.preview and self.preview.forecast) or self.forecast) or nil
+    if intents then Intent.draw(self, intents, self.hover.bug, self.preview and self.preview.changed, self.time) end
     self:boardOverlays()
     for _, e in ipairs(self.effects) do e.draw(e.t / e.dur) end
     for _, a in ipairs(self.actors) do if not a.gone or a.alpha > 0.05 then a:drawBadges(self.hover.bug == a.id) end end
+    if intents then Intent.drawOuts(self, intents, self.time) end
     if self.hover.bug and not self.director.playing then
         local a = self.actorById[self.hover.bug]
         if a and not a.gone then BV.actorRing(a, self.time, a.side == "kid" and "target" or "danger") end
@@ -939,14 +933,24 @@ function Fight:drawResult()
     love.graphics.setColor(1, 1, 1, 1)
     Assets.drawKid(rv.portrait, win and "sad" or "happy", 580, y + 250, 210)
     local why = ({ cleared = "Every rival bug has scurried off.", crumbs = "The crumbs are home.", wiped = "All your bugs scurried off.", sun = "Dinner time! Mom's calling. The Rule's score decided it." })[r.why] or ""
-    Text.body(why, 700, y + 130, 17, Text.INK, "left", 440)
-    Text.body('"' .. (win and rv.line.lose or rv.line.win) .. '"', 700, y + 190, 22, C.magentaDark, "left", 440)
-    Text.body("Rewound " .. self.rewinds .. " time" .. (self.rewinds == 1 and "" or "s") .. ".   Ticks used: " .. self.state.tick .. ".", 700, y + 280, 13, { 0.4, 0.25, 0.5 }, "left", 440)
+    Text.body(why, 700, y + 120, 17, Text.INK, "left", 440)
+    Text.body('"' .. (win and rv.line.lose or rv.line.win) .. '"', 700, y + 170, 22, C.magentaDark, "left", 440)
+    -- the stakes
+    local bet = self.bet
+    love.graphics.setColor(1, 1, 1, 1)
+    local mw, mh = Assets.ui:size("icon_marble")
+    love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_marble, 716, y + 252, 0, 34 / mh, 34 / mh, mw / 2, mh / 2)
+    Text.display(win and ("YOU TAKE THE POT: +" .. bet .. (bet == 1 and " MARBLE" or " MARBLES")) or ("THEY KEEP THE POT: YOUR " .. bet .. (bet == 1 and " MARBLE" or " MARBLES")),
+        742, y + 241, 19, win and C.tealDark or C.magentaDark, "left", 420)
+    if r.lastFight then
+        Text.body("You can't cover another bet of " .. bet .. ": this was your last fight today. Rewind?", 700, y + 272, 13, C.red, "left", 440)
+    end
+    Text.body("Rewound " .. self.rewinds .. " time" .. (self.rewinds == 1 and "" or "s") .. ".   Ticks used: " .. self.state.tick .. ".", 700, y + 312, 13, { 0.4, 0.25, 0.5 }, "left", 440)
     local rc = self:resultRects()
     for name, rect in pairs(rc) do
         local hov = self.mouse.x >= rect.x and self.mouse.x <= rect.x + rect.w and self.mouse.y >= rect.y and self.mouse.y <= rect.y + rect.h
         Paper.panel(rect.x, rect.y + (hov and -5 or 0), rect.w, rect.h, { fill = name == "go" and C.teal or C.cream2, seed = name == "go" and 62 or 63, r = 20, rot = name == "go" and -0.01 or 0.01 })
-        Text.display(name == "go" and ((not win and self.enc.tutorial) and "TRY AGAIN" or "CONTINUE") or "REWIND", rect.x + rect.w / 2, rect.y + 26 + (hov and -5 or 0), 28, name == "go" and { 1, 1, 1 } or Text.INK, "center")
+        Text.display(name == "go" and "CONTINUE" or "REWIND", rect.x + rect.w / 2, rect.y + 26 + (hov and -5 or 0), 28, name == "go" and { 1, 1, 1 } or Text.INK, "center")
     end
 end
 
@@ -976,6 +980,12 @@ function Fight:drawIntro()
     Paper.panel(930, y - 36, 360, 76, { fill = C.cream, seed = 8, r = 20, rot = 0.01 })
     Text.display(rv.name, 950, y - 24, 12, C.magentaDark, "left", 320)
     Text.body('"' .. rv.line.start .. '"', 950, y + 1, 17, Text.INK, "left", 320)
+    -- the stakes
+    love.graphics.setColor(1, 1, 1, 1)
+    local mw, mh = Assets.ui:size("icon_marble")
+    love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_marble, 1004, y + 398, 0, 36 / mh, 36 / mh, mw / 2, mh / 2)
+    Text.display("POT: " .. (2 * self.bet) .. " MARBLES", 1030, y + 386, 22, C.magentaDark, "left", 290)
+    Text.body(rv.name .. " bets " .. self.bet .. ", and so do you.", 1030, y + 412, 12.5, { 0.4, 0.25, 0.5 }, "left", 300)
 end
 
 function Fight:drawCursor(x, y, time)

@@ -2,7 +2,6 @@
 
 local Assets = require("client.assets")
 local Text = require("client.text")
-local Tween = require("client.tween")
 
 local Fx = { items = {}, shakeAmount = 0, flash = 0 }
 

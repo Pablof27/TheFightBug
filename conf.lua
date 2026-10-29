@@ -5,8 +5,11 @@ function love.conf(t)
     t.window.icon = "resources/art/icon.png"
     t.window.width = 1280
     t.window.height = 720
-    t.window.minwidth = 800
-    t.window.minheight = 450
+    -- In a browser (web/build.sh) the window is the page, which may be smaller than this.
+    if love._os ~= "Web" then
+        t.window.minwidth = 800
+        t.window.minheight = 450
+    end
     t.window.resizable = true
     t.window.vsync = 1
     t.window.msaa = 4

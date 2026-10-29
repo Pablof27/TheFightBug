@@ -15,12 +15,7 @@ local function readJson(path)
     return json.decode(s)
 end
 
-local function img(path)
-    local i = love.graphics.newImage(path, { mipmaps = true })
-    i:setFilter("linear", "linear")
-    i:setMipmapFilter("linear", 0)
-    return i
-end
+local img = Atlas.loadImage
 
 function Assets.load()
     if Assets.loaded then return end

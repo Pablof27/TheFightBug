@@ -1,5 +1,6 @@
 -- Movement rules and path finding. Walkers are blocked by terrain and by ENEMY bugs but squeeze past their friends
--- (they just can't stop on a friend). Flyers and jumpers only care about where they land.
+-- (they just can't stop on a friend). Flyers and jumpers only care about where they land. Nobody ever stands on a
+-- pebble, a knot or a stick: flyers and jumpers pass over them, walkers go around, a pushed bug bumps into them.
 -- Every tie is broken the same visible way (GDD §5.4): shortest path, then diagonal progress, then trails,
 -- then reading order; and the axis with more distance left to go is walked first (vertical on ties).
 
@@ -12,15 +13,7 @@ local Path = {}
 function Path.canEnter(s, bug, x, y, o)
     o = o or {}
     local c = Grid.cell(s, x, y)
-    if not c or c.void then return false end
-    local blk = c.block
-    if blk then
-        if blk == "stick" then
-            if bug.mtype == "walk" then return false end
-        else
-            return false
-        end
-    end
+    if not c or c.void or c.block then return false end
     if c.puddle and c.cover ~= "leaf" and bug.mtype ~= "fly" and not o.pushed then return false end
     local other = State.at(s, x, y)
     if other and other ~= bug and not (o.pass and other.side == bug.side) then return false end
@@ -29,11 +22,10 @@ end
 
 local PASS = { pass = true }
 
---- Landing rule for flyers and jumpers (they pass over anything but must come down on a free tile).
+--- Landing rule for flyers and jumpers (they pass over anything but must come down on a free, open tile).
 function Path.canLand(s, bug, x, y)
     local c = Grid.cell(s, x, y)
-    if not c or c.void then return false end
-    if c.block == "pebble" or c.block == "knot" then return false end
+    if not c or c.void or c.block then return false end
     if bug.mtype == "jump" and c.puddle and c.cover ~= "leaf" then return false end
     local o = State.at(s, x, y)
     if o and o ~= bug then return false end

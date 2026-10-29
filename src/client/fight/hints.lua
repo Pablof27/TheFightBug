@@ -10,12 +10,12 @@ end
 local LIST = {
     {
         id = "wasp", once = true, ttl = 40,
-        text = "A wasp, a stag beetle and more are after your bugs! You never give orders. You change the world and they follow their instincts. Dotted arrows show what each bug will do when its timer hits 0.",
+        text = "A wasp, a stag beetle and more are after your bugs! You never give orders. You change the world and they follow their instincts. Dotted arrows show what each bug will do. A bug whose timer shows 0 acts on the next tick.",
         when = function(s) return s.state.stats.cards == 0 and s.state.tick == 0 and not s.armed and not s.hover.card end,
     },
     {
         id = "shadow", once = false,
-        text = "SHADOW costs no time. The wasp's timer goes 1 -> 2, so it will act one tick later. Free actions are the best actions.",
+        text = "SHADOW costs no time. The wasp's timer goes 0 -> 1, so it will act one tick later. Free actions are the best actions.",
         when = function(s) return s.hover.card and s.state.hand[s.hover.card] == "shadow" or (s.armed and s.armed.id == "shadow") end,
     },
     {
@@ -38,14 +38,14 @@ local LIST = {
         text = "The stag beetle will charge down its column and ram whatever is in line. It is HEAVY: Flick can't move it. Block it with a stick? Move the target? Or let the pill bug curl and roll?",
         when = function(s)
             local stag = bugAt(s, "stag", "rival")
-            return stag and stag.timer <= 2 and not s.armed and s.state.tick >= 2 and not s.state.winner and not s.shownStag
+            return stag and stag.timer <= 1 and not s.armed and s.state.tick >= 2 and not s.state.winner and not s.shownStag
         end,
         onShow = function(s) s.shownStag = true end,
     },
     {
         id = "stomp", once = true, ttl = 16,
         text = "The Bully's STOMP is coming. It lands on the 3x3 area with the most of your bugs and delays everyone in it by +2. Spread out, or shadow his bugs!",
-        when = function(s) return s.state.rival and s.state.rival.timer <= 2 and not s.state.winner end,
+        when = function(s) return s.state.rival and s.state.rival.timer <= 1 and not s.state.winner end,
     },
     {
         id = "rewind", once = true, ttl = 14,

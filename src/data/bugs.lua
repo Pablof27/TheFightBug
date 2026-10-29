@@ -1,13 +1,15 @@
 -- Species data. Plain tables: the simulation copies what it needs onto each bug instance.
 -- Stats follow the GDD §6.2 starter roster (stamina / bite / timer / weight / move); weight is 1 Light, 2 Medium, 3 Heavy.
+-- Timers read one lower than in the GDD because a bug at 0 acts on the NEXT tick (demo rule DD-32): same pace, new numbers.
+-- price = marbles at the Swap Shop (a colony's price buys all 3 ants). No price: not for sale.
 -- Anything marked (demo) is an addition made for the demo, see design/02-demo-decisions.md.
 
 local LIGHT, MEDIUM, HEAVY = 1, 2, 3
 
 return {
   ant = {
-    name = "Black garden ant", short = "Ant", latin = "Lasius niger", role = "Swarmer",
-    hp = 1, bite = 1, timer = 2, weight = LIGHT, move = 2, mtype = "walk", reach = 1,
+    name = "Black garden ant", short = "Ant", latin = "Lasius niger", role = "Swarmer", price = 3,
+    hp = 1, bite = 1, timer = 1, weight = LIGHT, move = 2, mtype = "walk", reach = 1,
     instinct = "forager", traits = { trail = true }, colony = 3,
     likes = { crumb = true, sugar = true, juice = true, loot = true },
     size = 0.6,
@@ -21,8 +23,8 @@ return {
     note = "Common everywhere. Bring a handful of them to a picnic and you'll see.",
   },
   redant = {
-    name = "Red wood ant", short = "Red ant", latin = "Formica rufa", role = "Swarmer",
-    hp = 1, bite = 1, timer = 2, weight = LIGHT, move = 2, mtype = "walk", reach = 2,
+    name = "Red wood ant", short = "Red ant", latin = "Formica rufa", role = "Swarmer", price = 4,
+    hp = 1, bite = 1, timer = 1, weight = LIGHT, move = 2, mtype = "walk", reach = 2,
     instinct = "forager", traits = { trail = true, acid = true }, colony = 3,
     likes = { crumb = true, sugar = true, juice = true, loot = true },
     size = 0.6,
@@ -36,8 +38,8 @@ return {
     note = "Builds big mounds of pine needles in woodland.",
   },
   pillbug = {
-    name = "Common pill woodlouse", short = "Pill bug", latin = "Armadillidium vulgare", role = "Tank",
-    hp = 3, bite = 0, timer = 3, weight = LIGHT, move = 1, mtype = "walk", reach = 1,
+    name = "Common pill woodlouse", short = "Pill bug", latin = "Armadillidium vulgare", role = "Tank", price = 2,
+    hp = 3, bite = 0, timer = 2, weight = LIGHT, move = 1, mtype = "walk", reach = 1,
     instinct = "hider", traits = { curl = true }, colony = nil,
     likes = {},
     size = 0.85,
@@ -51,8 +53,8 @@ return {
     note = "Look under a log or flower pot: damp, dark and quiet.",
   },
   stag = {
-    name = "Stag beetle", short = "Stag beetle", latin = "Lucanus cervus", role = "Bruiser",
-    hp = 4, bite = 2, timer = 3, weight = HEAVY, move = 2, mtype = "walk", reach = 1,
+    name = "Stag beetle", short = "Stag beetle", latin = "Lucanus cervus", role = "Bruiser", price = 4,
+    hp = 4, bite = 2, timer = 2, weight = HEAVY, move = 2, mtype = "walk", reach = 1,
     instinct = "charger", traits = { wrestler = true }, colony = nil,
     likes = {},
     size = 1.1,
@@ -66,8 +68,8 @@ return {
     note = "Protected under the EU Habitats Directive.",
   },
   mantis = {
-    name = "European mantis", short = "Mantis", latin = "Mantis religiosa", role = "Ambusher",
-    hp = 2, bite = 3, timer = 3, weight = MEDIUM, move = 0, mtype = "walk", reach = 1,
+    name = "European mantis", short = "Mantis", latin = "Mantis religiosa", role = "Ambusher", price = 3,
+    hp = 2, bite = 3, timer = 2, weight = MEDIUM, move = 0, mtype = "walk", reach = 1,
     instinct = "ambusher", traits = { ambush = true }, colony = nil,
     likes = {},
     size = 1.0,
@@ -81,8 +83,8 @@ return {
     note = "Common in southern Europe; rarer further north.",
   },
   spider = {
-    name = "Zebra jumping spider", short = "Jumper", latin = "Salticus scenicus", role = "Hunter",
-    hp = 2, bite = 2, timer = 2, weight = LIGHT, move = 3, mtype = "jump", reach = 1,
+    name = "Zebra jumping spider", short = "Jumper", latin = "Salticus scenicus", role = "Hunter", price = 3,
+    hp = 2, bite = 2, timer = 1, weight = LIGHT, move = 3, mtype = "jump", reach = 1,
     instinct = "pouncer", traits = { leap = true }, colony = nil,
     likes = {},
     size = 0.7,
@@ -96,8 +98,8 @@ return {
     note = "Often found sunbathing on garden walls and fences.",
   },
   cricket = {
-    name = "Field cricket", short = "Cricket", latin = "Gryllus campestris", role = "Support",
-    hp = 2, bite = 1, timer = 3, weight = LIGHT, move = 2, mtype = "walk", reach = 1,
+    name = "Field cricket", short = "Cricket", latin = "Gryllus campestris", role = "Support", price = 3,
+    hp = 2, bite = 1, timer = 2, weight = LIGHT, move = 2, mtype = "walk", reach = 1,
     instinct = "chorus", traits = { chirp = true }, colony = nil,
     likes = {},
     size = 0.8,
@@ -106,13 +108,13 @@ return {
       move = "Walks. Hops away from enemies that get next to it.",
       action = "Chirps: friends within 2 tiles get -1 timer.",
     },
-    trait = "Chirp: speeds up everyone nearby (their timers never drop below 1).",
+    trait = "Chirp: speeds up everyone nearby (a timer never drops below 0).",
     fact = "Males chirp by rubbing a scraper on one wing against a file on the other. The warmer the night, the faster they chirp.",
     note = "Rare and protected in some countries.",
   },
   wasp = {
-    name = "Common wasp", short = "Wasp", latin = "Vespula vulgaris", role = "Wildcard",
-    hp = 2, bite = 3, timer = 2, weight = LIGHT, move = 3, mtype = "fly", reach = 1,
+    name = "Common wasp", short = "Wasp", latin = "Vespula vulgaris", role = "Wildcard", price = 3,
+    hp = 2, bite = 3, timer = 1, weight = LIGHT, move = 3, mtype = "fly", reach = 1,
     instinct = "sweet", traits = { alarm = true }, colony = nil,
     likes = { sugar = true, juice = true },
     size = 0.85,
@@ -127,7 +129,7 @@ return {
   },
   hercules = {
     name = "Hercules beetle", short = "Hercules", latin = "Dynastes hercules", role = "Bruiser (exotic)",
-    hp = 5, bite = 2, timer = 3, weight = HEAVY, move = 2, mtype = "walk", reach = 1,
+    hp = 5, bite = 2, timer = 2, weight = HEAVY, move = 2, mtype = "walk", reach = 1,
     instinct = "charger", traits = { wrestler = true }, colony = nil,
     likes = {},
     size = 1.2,

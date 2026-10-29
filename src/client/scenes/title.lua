@@ -4,7 +4,6 @@ local Assets = require("client.assets")
 local Paper = require("client.paper")
 local Text = require("client.text")
 local Audio = require("client.audio")
-local Fx = require("client.fx")
 local Tween = require("client.tween")
 local UI = require("client.ui")
 local Run = require("sim.run")
@@ -16,6 +15,8 @@ Title.__index = Title
 local ORDER = { "ant", "pillbug", "stag", "cricket", "wasp", "mantis", "redant", "spider", "hercules" }
 local PLAY = { x = 352, y = 560, w = 400, h = 110 }
 local QUIT = { x = 432, y = 700, w = 240, h = 70 }
+-- In a browser, quitting would only freeze the page: no QUIT there.
+local CAN_QUIT = love.system.getOS() ~= "Web"
 
 function Title.new(app, params)
     local self = setmetatable({ app = app, time = 0, hover = nil, logoPop = 0 }, Title)
@@ -72,22 +73,22 @@ function Title:draw()
     end
     -- buttons
     UI.button(PLAY, "PLAY!", { hover = self.hover == "play", size = 54, seed = 71, fill = C.teal })
-    UI.button(QUIT, "QUIT", { hover = self.hover == "quit", size = 26, seed = 72, fill = C.orange })
+    if CAN_QUIT then UI.button(QUIT, "QUIT", { hover = self.hover == "quit", size = 26, seed = 72, fill = C.orange }) end
     Text.body("Press SPACE to play  ·  M mutes  ·  F11 fullscreen", 552, 790, 14, { 1, 1, 1 }, "center", nil, 2)
-    Text.body("A first playable demo.  All art and sound are hand-made by the project's own HTML/JS workshop tools.", 800, 876, 12.5, { 1, 0.95, 0.85 }, "center", nil, 2)
+    Text.body("A first playable demo.", 800, 876, 12.5, { 1, 0.95, 0.85 }, "center", nil, 2)
 end
 
 function Title:mousemoved(x, y)
-    self.hover = UI.inside(PLAY, x, y) and "play" or UI.inside(QUIT, x, y) and "quit" or nil
+    self.hover = UI.inside(PLAY, x, y) and "play" or CAN_QUIT and UI.inside(QUIT, x, y) and "quit" or nil
 end
 
 function Title:mousepressed(x, y, b)
     if b ~= 1 then return end
-    if UI.inside(PLAY, x, y) then self:start() elseif UI.inside(QUIT, x, y) then love.event.quit() end
+    if UI.inside(PLAY, x, y) then self:start() elseif CAN_QUIT and UI.inside(QUIT, x, y) then love.event.quit() end
 end
 
 function Title:keypressed(key)
-    if key == "space" or key == "return" then self:start() elseif key == "escape" then love.event.quit() end
+    if key == "space" or key == "return" then self:start() elseif key == "escape" and CAN_QUIT then love.event.quit() end
 end
 
 return Title

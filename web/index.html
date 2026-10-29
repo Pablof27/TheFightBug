@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>{{title}}</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1a0824; }
+    /* SDL takes the CSS size of the canvas as the window size and follows it on resize (love.resize). */
+    #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; touch-action: none; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: #2b1238; color: #fff3d6; font: 600 18px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      text-align: center; transition: opacity .3s;
+    }
+    #overlay.gone { opacity: 0; pointer-events: none; }
+    #overlay.ready { cursor: pointer; }
+    #overlay img { width: 128px; height: 128px; }
+    #overlay h1 { margin: 0; font-size: 40px; letter-spacing: 1px; }
+    #bar { width: min(360px, 70vw); height: 12px; border-radius: 6px; background: #1a0824; overflow: hidden; }
+    #fill { width: 0; height: 100%; background: #24c7b0; transition: width .2s; }
+    #status { margin: 0; min-height: 1.4em; max-width: 80vw; }
+    #play { padding: 14px 44px; border: 3px solid #1a0824; border-radius: 14px; background: #24c7b0; color: #1a0824;
+            font: inherit; font-size: 26px; cursor: pointer; box-shadow: 0 5px 0 #1a0824; }
+    #play:hover { background: #ffd140; }
+    #help { margin: 0; font-size: 14px; opacity: .7; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="overlay">
+    <img src="favicon.png" alt="">
+    <h1>{{title}}</h1>
+    <div id="bar"><div id="fill"></div></div>
+    <p id="status">Loading…</p>
+    <button id="play" hidden>Click to play</button>
+    <p id="help" hidden>F11 fullscreen · M mute</p>
+  </div>
+
+  <script>
+    var canvas = document.getElementById('canvas');
+    var overlay = document.getElementById('overlay');
+    var statusText = document.getElementById('status');
+    var fill = document.getElementById('fill');
+    var playButton = document.getElementById('play');
+    var help = document.getElementById('help');
+    var state = 'loading'; // loading -> ready (waiting for the click) -> playing; or failed
+
+    function fail(message) {
+      if (state === 'failed') return;
+      state = 'failed';
+      overlay.classList.remove('gone', 'ready');
+      playButton.hidden = true;
+      statusText.textContent = message;
+    }
+
+    function ready() {
+      if (state !== 'loading') return;
+      state = 'ready';
+      fill.style.width = '100%';
+      statusText.textContent = '';
+      playButton.hidden = false;
+      help.hidden = false;
+      overlay.classList.add('ready');
+      playButton.focus();
+    }
+
+    // Browsers only allow sound after a click or key press, so the game waits behind this screen for one.
+    function start() {
+      if (state !== 'ready') return;
+      state = 'playing';
+      overlay.classList.add('gone');
+      canvas.focus();
+    }
+    overlay.addEventListener('click', start);
+
+    window.addEventListener('keydown', function (e) {
+      if (state !== 'playing') {
+        // Keep keys away from the game until it is visible; Enter / Space start it.
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        if (e.key === 'Enter' || e.key === ' ') start();
+        return;
+      }
+      if (e.key === 'F11') {
+        // Fullscreen the page (the canvas follows) from inside the key event, which browsers require.
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        var request = null;
+        if (document.fullscreenElement) request = document.exitFullscreen();
+        else if (document.documentElement.requestFullscreen) request = document.documentElement.requestFullscreen();
+        if (request && request.catch) request.catch(function () {});
+        return;
+      }
+      // Space, the arrows and Tab are game keys: don't let the browser scroll or move the focus.
+      if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].indexOf(e.key) >= 0) e.preventDefault();
+    }, true);
+
+    canvas.addEventListener('webglcontextlost', function (e) {
+      e.preventDefault();
+      fail('The graphics context was lost. Please reload the page.');
+    });
+    window.addEventListener('error', function () {
+      fail('Sorry, the game could not start. Try reloading, or another browser (details in the console).');
+    });
+
+    var Module = {
+      arguments: ['./game.love'],
+      INITIAL_MEMORY: {{memory}},
+      canvas: canvas,
+      // Versioned URLs, so a redeploy never mixes a cached game.js with a newer game.data (or the reverse).
+      locateFile: function (file) { return file + '?v={{build}}'; },
+      printErr: console.error.bind(console),
+      totalDependencies: 0,
+      setStatus: function (text) {
+        if (state !== 'loading') return;
+        var m = /\((\d+)\/(\d+)\)/.exec(text || '');
+        if (m && /download/i.test(text)) {
+          var p = Math.min(1, +m[1] / +m[2]);
+          fill.style.width = Math.round(p * 100) + '%';
+          statusText.textContent = 'Downloading… ' + Math.round(p * 100) + '%';
+        } else if (text) {
+          statusText.textContent = 'Starting…';
+        } else {
+          ready();
+        }
+      },
+      monitorRunDependencies: function (left) {
+        this.totalDependencies = Math.max(this.totalDependencies, left);
+        if (left) Module.setStatus('Preparing…');
+      },
+      onAbort: function () { fail('Sorry, the game stopped unexpectedly. Please reload the page.'); }
+    };
+  </script>
+  <script src="game.js?v={{build}}"></script>
+  <script async src="love.js?v={{build}}" onload="Love(Module)" onerror="fail('Could not load the game engine (love.js).')"></script>
+</body>
+</html>

@@ -3,11 +3,19 @@
 local Atlas = {}
 Atlas.__index = Atlas
 
+--- Loads a png with smooth filtering, mipmapped when the GPU allows it: WebGL 1 (the browser build) cannot mipmap
+--- textures whose sides are not powers of two.
+function Atlas.loadImage(path)
+    local mipmaps = love.graphics.getSupported().fullnpot
+    local img = love.graphics.newImage(path, { mipmaps = mipmaps })
+    img:setFilter("linear", "linear")
+    if mipmaps then img:setMipmapFilter("linear", 0) end
+    return img
+end
+
 --- imagePath: png; meta: decoded json ({ frames = { name = {x,y,w,h,px,py} }, pivot = {px,py}, scale = n })
 function Atlas.new(imagePath, meta)
-    local img = love.graphics.newImage(imagePath, { mipmaps = true })
-    img:setFilter("linear", "linear")
-    img:setMipmapFilter("linear", 0)
+    local img = Atlas.loadImage(imagePath)
     local a = setmetatable({ image = img, frames = meta.frames or {}, quads = {}, meta = meta }, Atlas)
     local iw, ih = img:getDimensions()
     for name, f in pairs(a.frames) do

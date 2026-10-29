@@ -9,7 +9,7 @@ local Cards = require("data.cards")
 
 local Fx = {}
 
-local function targetable(s, b) return b.side == "kid" or not Q.isHidden(s, b) end
+-- The kid looks down on the whole board: Hidden only fools the bugs, so every card can pick any bug (demo rule DD-35).
 
 local function walkable(s, x, y)
     local c = Grid.cell(s, x, y)
@@ -42,7 +42,7 @@ end
 local defs = {}
 
 defs.flick = {
-    bug = function(s, b) return targetable(s, b) and b.weight <= 2 end,
+    bug = function(s, b) return b.weight <= 2 end,
     dir = function() return true end,
     apply = function(s, sel)
         State.emit(s, "hand", { card = "flick", id = sel[1], dx = sel[2].dx, dy = sel[2].dy })
@@ -51,7 +51,7 @@ defs.flick = {
 }
 
 defs.shove = {
-    bug = function(s, b) return targetable(s, b) end,
+    bug = function() return true end,
     dir = function() return true end,
     apply = function(s, sel)
         State.emit(s, "hand", { card = "shove", id = sel[1], dx = sel[2].dx, dy = sel[2].dy })
@@ -120,7 +120,7 @@ defs.water = {
 }
 
 defs.shadow = {
-    bug = function(s, b) return targetable(s, b) end,
+    bug = function() return true end,
     apply = function(s, sel)
         State.emit(s, "hand", { card = "shadow", id = sel[1] })
         R.addTimer(s, State.byId(s, sel[1]), 1, "shadow")

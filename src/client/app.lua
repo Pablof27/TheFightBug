@@ -20,7 +20,7 @@ function App.load(args)
     scenes.title = require("client.scenes.title")
     scenes.map = require("client.scenes.map")
     scenes.fight = require("client.scenes.fight")
-    scenes.reward = require("client.scenes.reward")
+    scenes.shop = require("client.scenes.shop")
     scenes.ending = require("client.scenes.ending")
     local first = "title"
     for _, a in ipairs(args or {}) do if a == "--fight" then first = "fight" end end

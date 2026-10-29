@@ -1,4 +1,4 @@
--- Small shared widgets for the menu-like scenes (title, map, reward, ending).
+-- Small shared widgets for the menu-like scenes (title, map, shop, ending).
 
 local Paper = require("client.paper")
 local Text = require("client.text")

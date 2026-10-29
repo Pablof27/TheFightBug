@@ -1,10 +1,11 @@
 -- The three fights of the demo: a morning at the park. Layouts are written top row (y = 6) first, column A first.
 --   .  plain ground     g  grass (cover)   l  leaf (cover)   p  pebble   k  knot (stump)   ~  puddle
 --   s  shade (+1 timer when a bug acts here)    u  sun patch (-1)    #  not part of the arena
--- Teams: { species, x, y, timer }. Home rows are 1-2 (yours) and 5-6 (the rival's).
+-- Teams: { species, x, y, timer }. Home rows are 1-2 (yours) and 5-6 (the rival's). A timer of 0 acts on the first tick.
 
 return {
     -- 1 ─ The GDD's own worked example (§5.13) is the opening position, so the first thing you do is solve it.
+    --     (Its timers read one lower than in the GDD: here a bug at 0 acts on the next tick, see DD-32.)
     {
         id = "sandbox", name = "Sandbox Showdown", place = "The Sandbox", arena = "sandbox",
         rule = "lbs", rival = "bully", sunLimit = 40, tutorial = true,
@@ -17,16 +18,16 @@ return {
             ".....u",
         },
         rivalTeam = {
-            { species = "wasp", x = 2, y = 4, timer = 1 },
-            { species = "stag", x = 4, y = 5, timer = 3 },
-            { species = "wasp", x = 5, y = 6, timer = 4 },
-            { species = "wasp", x = 1, y = 5, timer = 5 },
+            { species = "wasp", x = 2, y = 4, timer = 0 },
+            { species = "stag", x = 4, y = 5, timer = 2 },
+            { species = "wasp", x = 5, y = 6, timer = 3 },
+            { species = "wasp", x = 1, y = 5, timer = 4 },
         },
         kidTeam = {
-            { species = "ant", x = 1, y = 2, timer = 2, uid = 1 },
-            { species = "ant", x = 2, y = 2, timer = 2, uid = 1 },
-            { species = "ant", x = 3, y = 2, timer = 2, uid = 1 },
-            { species = "pillbug", x = 4, y = 2, timer = 3, uid = 2 },
+            { species = "ant", x = 1, y = 2, timer = 1, uid = 1 },
+            { species = "ant", x = 2, y = 2, timer = 1, uid = 1 },
+            { species = "ant", x = 3, y = 2, timer = 1, uid = 1 },
+            { species = "pillbug", x = 4, y = 2, timer = 2, uid = 2 },
             { species = "mantis", x = 5, y = 3, timer = 0, ready = true, uid = 3 },
         },
         jar = {
@@ -58,11 +59,11 @@ return {
             { tick = 12, x = 1, y = 4 }, { tick = 12, x = 6, y = 3 },
         },
         rivalTeam = {
-            { species = "ant", x = 2, y = 6, timer = 2 },
-            { species = "ant", x = 3, y = 5, timer = 2 },
-            { species = "ant", x = 4, y = 6, timer = 2 },
-            { species = "redant", x = 5, y = 5, timer = 2 },
-            { species = "redant", x = 1, y = 5, timer = 2 },
+            { species = "ant", x = 2, y = 6, timer = 1 },
+            { species = "ant", x = 3, y = 5, timer = 1 },
+            { species = "ant", x = 4, y = 6, timer = 1 },
+            { species = "redant", x = 5, y = 5, timer = 1 },
+            { species = "redant", x = 1, y = 5, timer = 1 },
         },
     },
 
@@ -79,7 +80,7 @@ return {
             ".....",
         },
         rivalTeam = {
-            { species = "hercules", x = 3, y = 4, timer = 3 },
+            { species = "hercules", x = 3, y = 4, timer = 2 },
         },
     },
 }

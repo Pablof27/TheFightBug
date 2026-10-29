@@ -1,4 +1,4 @@
--- The end of the demo: sunset (you release your bugs and Mom calls) or a lost run (Spirit ran out).
+-- The end of the demo: sunset (you release your bugs and Mom calls) or a lost run (you can't cover the next bet).
 
 local Assets = require("client.assets")
 local Paper = require("client.paper")
@@ -8,6 +8,7 @@ local Fx = require("client.fx")
 local UI = require("client.ui")
 local Run = require("sim.run")
 local Bugs = require("data.bugs")
+local Rivals = require("data.rivals")
 
 local C = Paper.C
 local Ending = {}
@@ -15,6 +16,8 @@ Ending.__index = Ending
 
 local AGAIN = { x = 190, y = 760, w = 340, h = 96 }
 local QUIT = { x = 560, y = 776, w = 200, h = 64 }
+-- In a browser, quitting would only freeze the page: no QUIT there.
+local CAN_QUIT = love.system.getOS() ~= "Web"
 
 function Ending.new(app, params)
     local self = setmetatable({ app = app, time = 0, hover = nil }, Ending)
@@ -50,8 +53,9 @@ function Ending:draw()
         Text.body("You tip the jar over and let your bugs walk back into the grass. They'll still be here tomorrow.", 170, 205, 17, Text.INK, "left", 740)
     else
         Text.display("THE PARK CAN WAIT", 540, 70, 46, C.purple, "center")
-        Text.body("Your Spirit ran out. Everybody goes home early, but the bugs are still out there...", 170, 150, 19, Text.INK, "left", 740)
-        Text.body("Try again: a new idea, a different card, a bug you skipped. Nothing in a fight is random.", 170, 205, 17, Text.INK, "left", 740)
+        local rv = Rivals[Run.encounter(run).rival]
+        Text.body("You have " .. run.marbles .. (run.marbles == 1 and " marble" or " marbles") .. " left, and " .. rv.name .. " won't play for less than " .. rv.bet .. ". Nobody plays with a kid who can't pay up, so everybody goes home early.", 170, 140, 18, Text.INK, "left", 740)
+        Text.body("Try again: a new idea, a different card, a smarter buy at the Swap Shop. Nothing in a fight is random.", 170, 224, 16, Text.INK, "left", 740)
     end
     -- numbers
     local sx, sy = 170, 290
@@ -60,9 +64,8 @@ function Ending:draw()
         Text.display(label, x, y + 52, 12, { 0.4, 0.25, 0.5 }, "left")
     end
     stat("FIGHTS WON", tostring(run.wins) .. "/3", sx, sy, C.tealDark)
-    stat("SPIRIT LEFT", tostring(run.spirit), sx + 190, sy, C.magentaDark)
-    stat("MARBLES", tostring(run.marbles), sx + 380, sy, C.orange)
-    stat("REWINDS USED", tostring(run.rewinds or 0), sx + 560, sy, C.purple)
+    stat("MARBLES", tostring(run.marbles), sx + 240, sy, C.orange)
+    stat("REWINDS USED", tostring(run.rewinds or 0), sx + 480, sy, C.purple)
     -- journal
     Text.display("BUG JOURNAL", 170, 400, 16, C.tealDark, "left")
     local seen = {}
@@ -75,7 +78,7 @@ function Ending:draw()
         Assets.drawPortrait(id, x, 482, 62)
     end
     Text.body(#seen .. " of 9 species met in this demo. The full game has 30+ to meet, catch and learn about.", 170, 545, 14, { 0.4, 0.25, 0.5 }, "left", 740)
-    Text.body("Next in the full game: shops, benches, wild events, bigger Jar, bosses with real kid-sized rules, and the Bug Journal as a collection.", 170, 585, 14, Text.INK, "left", 740)
+    Text.body("Next in the full game: a whole park map, benches, wild events, bosses with real kid-sized rules, and the Bug Journal as a collection.", 170, 585, 14, Text.INK, "left", 740)
 
     -- walkers go home
     for _, w in ipairs(self.walkers) do
@@ -92,11 +95,11 @@ function Ending:draw()
     end
 
     UI.button(AGAIN, self.won and "PLAY AGAIN" or "TRY AGAIN", { hover = self.hover == "again", size = 38, seed = 96, fill = self.won and C.teal or C.orange })
-    UI.button(QUIT, "QUIT", { hover = self.hover == "quit", size = 24, seed = 97, fill = C.purpleLight })
+    if CAN_QUIT then UI.button(QUIT, "QUIT", { hover = self.hover == "quit", size = 24, seed = 97, fill = C.purpleLight }) end
 end
 
 function Ending:mousemoved(x, y)
-    self.hover = UI.inside(AGAIN, x, y) and "again" or UI.inside(QUIT, x, y) and "quit" or nil
+    self.hover = UI.inside(AGAIN, x, y) and "again" or CAN_QUIT and UI.inside(QUIT, x, y) and "quit" or nil
 end
 
 function Ending:again()
@@ -106,11 +109,11 @@ end
 
 function Ending:mousepressed(x, y, b)
     if b ~= 1 then return end
-    if UI.inside(AGAIN, x, y) then self:again() elseif UI.inside(QUIT, x, y) then love.event.quit() end
+    if UI.inside(AGAIN, x, y) then self:again() elseif CAN_QUIT and UI.inside(QUIT, x, y) then love.event.quit() end
 end
 
 function Ending:keypressed(key)
-    if key == "space" or key == "return" then self:again() elseif key == "escape" then love.event.quit() end
+    if key == "space" or key == "return" then self:again() elseif key == "escape" and CAN_QUIT then love.event.quit() end
 end
 
 return Ending
