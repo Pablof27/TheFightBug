@@ -26,7 +26,8 @@ function Assets.load()
     Assets.tiles = Atlas.new(ART .. "tiles.png", readJson(ART .. "tiles.json"))
     Assets.ui = Atlas.new(ART .. "ui.png", readJson(ART .. "ui.json"))
     Assets.people = Atlas.new(ART .. "people.png", readJson(ART .. "people.json"))
-    for _, id in ipairs({ "sandbox", "lawn", "stump" }) do
+    -- the 5x5 sandbox and lawn are the Bug Hunt boards
+    for _, id in ipairs({ "sandbox", "lawn", "stump", "sandbox5", "lawn5" }) do
         Assets.arena[id] = { image = img(ART .. "arena_" .. id .. ".png"), meta = readJson(ART .. "arena_" .. id .. ".json") }
     end
     for _, id in ipairs({ "sandbox", "lawn", "stump", "title", "map" }) do Assets.backdrop[id] = img(ART .. "backdrop_" .. id .. ".png") end

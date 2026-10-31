@@ -27,31 +27,43 @@ local Q = require("sim.query")
 local Grid = require("sim.grid")
 local Rules = require("sim.rules")
 local Run = require("sim.run")
+local Duel = require("sim.duel")
+local Hunt = require("sim.hunt")
 local U = require("sim.util")
 local Cards = require("data.cards")
 local Rivals = require("data.rivals")
+local Bugs = require("data.bugs")
+local RuleData = require("data.rules")
+local PD = require("data.park")
+local UI = require("client.ui")
+local Flow = require("client.flow")
 
 local C = Paper.C
 local Fight = {}
 Fight.__index = Fight
 
-local STAGE_BACKDROP = { sandbox = "sandbox", lawn = "lawn", stump = "stump" }
+local STAGE_BACKDROP = { sandbox = "sandbox", lawn = "lawn", stump = "stump", sandbox5 = "sandbox", lawn5 = "lawn" }
 local CARD_ITEM = { crumb = "crumb", sugar = "sugar", juice = "juice", pebble = "pebble", leaf = "leaf", stick = "stick", water = "puddle" }
 
+--- params: run, mode = "prologue" (the warm-up) | "duel" (a round of run.duel) | "hunt" (a Bug Hunt at params.spot).
+--- Without a run (love . --fight) the warm-up is played on a throwaway day.
 function Fight.new(app, params)
     local self = setmetatable({}, Fight)
     self.app = app
-    self.enc, self.run = params.enc, params.run
-    self.bet = Run.rivalBet(self.enc.rival)
+    self.run = params.run or app.run or Run.new(1)
+    self.mode = params.mode or "prologue"
+    local run = self.run
+    local enc
+    if self.mode == "duel" then enc = Duel.encounter(run)
+    elseif self.mode == "hunt" then enc = params.spot and Hunt.encounter(run, params.spot) end
+    if not enc then self.mode, enc = "prologue", Run.prologueEncounter() end
+    self.enc = enc
+    self.stake = enc.stake
     self.time = 0
-    self.state = SimFight.new(self.enc, { jar = self.run.jar, deck = self.run.deck, seed = Run.fightSeed(self.run) })
-    if self.state.phase == "deploy" then
-        local order = {}
-        for _, sp in ipairs(self.enc.deploy or {}) do
-            for _, e in ipairs(self.state.jar) do if e.species == sp then order[#order + 1] = e.uid break end end
-        end
-        SimFight.autoDeploy(self.state, order)
-    end
+    local opts = { deck = run.deck, seed = Run.fightSeed(run), items = run.items }
+    if self.mode ~= "prologue" then opts.jar = Run.available(run) end
+    self.state = SimFight.new(enc, opts)
+    if self.state.phase == "deploy" then SimFight.autoDeploy(self.state, {}) end
     State.drain(self.state)
     G.setup(self.state.w)
     self.view = { cells = U.clone(self.state.cells), w = self.state.w, h = self.state.h }
@@ -61,7 +73,9 @@ function Fight.new(app, params)
     self.history = {}
     self.version, self.forecastVersion = 0, -1
     self.hover, self.hits = {}, {}
-    self.disp = { tick = 0, rivalTimer = self.state.rival.timer, score = { kid = 0, rival = 0 }, scorePulse = { kid = 0, rival = 0 }, tickPulse = 0 }
+    local keeps = self.state.keeps
+    self.disp = { tick = 0, rivalTimer = self.state.rival.timer, score = { kid = 0, rival = 0 }, scorePulse = { kid = 0, rival = 0 }, tickPulse = 0,
+                  keeps = keeps and { kid = keeps.kid, rival = keeps.rival } or nil, caught = {} }
     self.effects, self.drops = {}, {}
     self.hintsDone, self.hintsMuted = {}, {}
     self.showIntents = true
@@ -74,6 +88,11 @@ function Fight.new(app, params)
     self.hand:sync(self.state.hand, true)
     return self
 end
+
+--- Who is it? The rival kid's data, or nil on a hunt (nature has no face).
+function Fight:rivalDef() return Rivals[self.state.rival.id] end
+
+function Fight:natureDef() return PD.natures[self.state.rival.id] end
 
 function Fight:enter()
     Audio.music("park")
@@ -121,6 +140,10 @@ function Fight:syncActors()
     self.disp.rivalTimer = self.state.rival.timer
     self.disp.score.kid = self.state.rule.score.kid
     self.disp.score.rival = self.state.rule.score.rival
+    local k = self.state.keeps
+    if k then self.disp.keeps = { kid = k.kid, rival = k.rival } end
+    self.disp.caught = {}
+    for i, c in ipairs(self.state.caught or {}) do self.disp.caught[i] = c end
 end
 
 function Fight:hiddenSet()
@@ -164,7 +187,7 @@ function Fight:perform(fn)
     end
     self.version = self.version + 1
     self.forecast, self.preview = nil, nil
-    self.armed, self.armedJar = nil, nil
+    self.armed, self.armedJar, self.armedTrap = nil, nil, nil
     local shown = {}
     local n = #self.state.hand - self:displayHandCount(events)
     for i = 1, math.max(0, n) do shown[i] = self.state.hand[i] end
@@ -182,15 +205,26 @@ function Fight:onPlaybackDone()
     if self.pendingEnd then
         local ev = self.pendingEnd
         self.pendingEnd = nil
-        -- decided now, before CONTINUE settles the bet: the banner stays on screen during the scene transition
-        local lastFight = ev.winner ~= "kid" and self.run.marbles - self.bet < self.bet
-        self.result = { winner = ev.winner, why = ev.why, t = 0, lastFight = lastFight }
-        self.rivalMood = ev.winner == "rival" and "happy" or "sad"
-        Audio.play(ev.winner == "kid" and "win" or "lose")
-        if ev.winner == "kid" then
+        local after = self:marblesAfter()
+        self.result = { winner = ev.winner, why = ev.why, t = 0, marbles = after, delta = after - self.run.marbles }
+        local good = ev.winner == "kid"
+        self.rivalMood = ev.winner == "rival" and "happy" or good and "sad" or "neutral"
+        if self.mode == "hunt" then good = #self.state.caught > 0 end
+        Audio.play(good and "win" or "lose")
+        if good then
             for i = 1, 8 do Fx.sparkle(love.math.random(300, 1300), love.math.random(150, 500), 3, 40) end
         end
     end
+end
+
+--- Your marbles once this round is settled (sim/duel.lua's arithmetic, without touching the run).
+function Fight:marblesAfter()
+    local s, run = self.state, self.run
+    if self.mode ~= "duel" then return run.marbles end
+    local stake = s.stake or 0
+    local kid = s.keeps and s.keeps.kid or (run.marbles - stake)
+    if s.winner == "kid" then kid = kid + 2 * stake elseif s.winner ~= "rival" then kid = kid + stake end
+    return kid
 end
 
 function Fight:onFightEnd(ev) self.pendingEnd = ev end
@@ -203,7 +237,7 @@ function Fight:rewind()
     self.state = table.remove(self.history)
     self.pendingEnd, self.result = nil, nil
     self.rivalMood = "neutral"
-    self.armed, self.armedJar = nil, nil
+    self.armed, self.armedJar, self.armedTrap = nil, nil, nil
     self.drops, self.effects = {}, {}
     G.setup(self.state.w)
     self:rebuildActors()
@@ -274,6 +308,34 @@ function Fight:stompAt(cx, cy)
             Fx.puff(x, y, 8, 0.4)
         end
         if k > 0.9 then self._stomped = nil end
+    end)
+end
+
+--- The Marble Champion's shooter: a marble rolls in along row cy.
+function Fight:rollMarble(cy)
+    self:addEffect(0.5, function(k)
+        local x = G.x - G.T * 0.4 + (G.size + G.T * 0.8) * k
+        UI.icon("icon_marble", x, cy + G.T * 0.22, G.T * 0.42, 1 - math.max(0, k - 0.85) / 0.15)
+    end)
+end
+
+--- A blackbird flies over: its shadow sweeps the board.
+function Fight:birdShadow()
+    self:addEffect(0.65, function(k)
+        local x = G.x - G.size * 0.3 + G.size * 1.6 * k
+        love.graphics.setColor(0.1, 0.05, 0.15, 0.4 * math.sin(k * math.pi))
+        love.graphics.ellipse("fill", x, G.y + G.size * 0.45, G.size * 0.34, G.size * 0.16)
+        love.graphics.ellipse("fill", x - G.size * 0.08, G.y + G.size * 0.45, G.size * 0.1, G.size * 0.32)
+    end)
+end
+
+--- A dog runs along row cy: paw prints.
+function Fight:dogRun(cy)
+    self:addEffect(0.6, function(k)
+        local n = math.floor(k * 8)
+        for i = 0, n do
+            UI.icon("icon_foot", G.x + (i + 0.5) * G.size / 8, cy + (i % 2 == 0 and -12 or 12), G.T * 0.34, 1 - k * 0.6)
+        end
     end)
 end
 
@@ -366,9 +428,27 @@ function Fight:updateHover(mx, my)
 end
 
 -- ───────────────────────── arming & choosing ─────────────────────────
+--- What a card costs right now (the Lunchbox) and whether it can be played at all (a house rule), cached per state.
+function Fight:cardInfo(id)
+    if self.cardCache == nil or self.cardCache.version ~= self.version then self.cardCache = { version = self.version } end
+    local c = self.cardCache[id]
+    if not c then
+        local s = self.state
+        c = { cost = Kid.cost(s, id), disabled = s.phase == "fight" and not Kid.playable(s, id) }
+        self.cardCache[id] = c
+    end
+    return c
+end
+
 function Fight:arm(cardIndex)
     local id = self.state.hand[cardIndex]
     if not id then return end
+    if not Kid.playable(self.state, id) then
+        Audio.play("block")
+        local noLures = self.state.house == "nolures" and Cards[id].type == "lure"
+        Fx.text(noLures and "NO LURES IN HIS SANDBOX!" or "NOTHING TO PLAY IT ON!", 800, 700, C.red, 26)
+        return
+    end
     self.armed = { card = cardIndex, id = id, sel = {} }
     self.armedJar = nil
     local opts = Kid.options(self.state, id, {})
@@ -377,8 +457,15 @@ function Fight:arm(cardIndex)
 end
 
 function Fight:cancelArm()
-    if self.armed or self.armedJar then Audio.play("card_cancel") end
-    self.armed, self.armedJar, self.preview = nil, nil, nil
+    if self.armed or self.armedJar or self.armedTrap then Audio.play("card_cancel") end
+    self.armed, self.armedJar, self.armedTrap, self.preview = nil, nil, nil, nil
+end
+
+--- Bug Hunts: close the lid. The hunt ends now and you keep what's in the jar.
+function Fight:closeLid()
+    if not self.canAct or self.state.phase ~= "fight" or self.state.rule.id ~= "jar" then Audio.play("block"); return end
+    Audio.play("place")
+    self:perform(function() return Kid.closeLid(self.state) end)
 end
 
 --- The pick the mouse is hovering over for the current step, if it is a legal one.
@@ -479,6 +566,7 @@ function Fight:mousepressed(x, y, button)
     if h.button == "undo" then return self:rewind() end
     if h.button == "mute" then Audio.toggleMute(); return end
     if h.button == "menu" then self.confirm = true; Audio.play("ui_click"); return end
+    if h.button == "lid" then return self:closeLid() end
     if self.hintRect and x >= self.hintRect.x and x <= self.hintRect.x + self.hintRect.w and y >= self.hintRect.y and y <= self.hintRect.y + self.hintRect.h and self.currentHint then
         self.hintsDone[self.currentHint.id] = true
         self.hintsMuted[self.currentHint.id] = true
@@ -489,8 +577,28 @@ function Fight:mousepressed(x, y, button)
         return self:startFight()
     end
     if h.jar then
-        if self.armedJar == h.jar then self:cancelArm() else self.armedJar = h.jar; self.armed = nil; Audio.play("card_pick") end
+        if self.armedJar == h.jar then self:cancelArm() else self.armedJar = h.jar; self.armed, self.armedTrap = nil, nil; Audio.play("card_pick") end
         return
+    end
+    -- Bug Hunts: before the start, the jar can be laid on another tile of your two rows
+    local s = self.state
+    if s.phase == "deploy" and s.rule.id == "jar" then
+        local t = h.tile
+        if self.armedTrap then
+            self.armedTrap = nil
+            if t and Kid.trapFree(s, t.x, t.y) then
+                Audio.play("place")
+                self:perform(function() return Kid.placeTrap(s, t.x, t.y) end)
+            else
+                Audio.play("card_cancel")
+            end
+            return
+        end
+        if t and s.trapAt and t.x == s.trapAt.x and t.y == s.trapAt.y and not self.armedJar then
+            self.armedTrap, self.armed = true, nil
+            Audio.play("card_pick")
+            return
+        end
     end
     if h.card and self.state.phase == "fight" then
         if self.armed and self.armed.card == h.card then self:cancelArm() else self:arm(h.card) end
@@ -544,7 +652,9 @@ function Fight:keypressed(key, isrepeat)
         return
     end
     if key == "escape" then
-        if self.armed or self.armedJar then self:cancelArm() else self.confirm = true end
+        if self.armed or self.armedJar or self.armedTrap then self:cancelArm() else self.confirm = true end
+    elseif key == "l" and self.state.rule.id == "jar" then
+        if not self.director.playing then self:closeLid() end
     elseif key == "space" then
         if self.director.playing then return end
         if self.state.phase == "deploy" then self:startFight() else self:doWait() end
@@ -582,19 +692,17 @@ function Fight:resultContinue()
     if not self.result then return end
     Audio.play("ui_click")
     local run = self.run
-    local won = self.result.winner == "kid"
     run.rewinds = (run.rewinds or 0) + self.rewinds
-    local sum = Run.finish(run, self.state)
-    if won and self.enc.boss then
-        Saves.finish(run, true)
-        self.app.switch("ending", { run = run, won = true, sum = sum })
-    elseif Run.over(run) then
-        -- you can't cover the next rival's bet. Checked after any fight, not just losses, so the map is never a dead end.
-        Saves.finish(run, false)
-        self.app.switch("ending", { run = run, won = false, sum = sum })
+    if self.mode == "duel" then
+        local rec = Duel.settle(run, self.state)
+        Flow.go(self.app, run, { rec = rec })
+    elseif self.mode == "hunt" then
+        local sum = Hunt.settle(run, self.state)
+        Flow.go(self.app, run, { hunt = sum })
     else
-        Saves.store(run)
-        self.app.switch("map", { run = run, sum = sum })
+        -- the warm-up was for fair: nothing changes hands, nobody naps
+        Run.endPrologue(run, self.state)
+        if run.slot then Flow.go(self.app, run) else self.app.switch("title") end
     end
 end
 
@@ -721,18 +829,40 @@ function Fight:boardOverlays()
             BV.tileGlow(prev.x, prev.y, "hover", t)
         end
     end
-    -- rival signature move: where it will land
+    -- rival signature move (or nature's move on a hunt): where it will land
     local peek = self.forecast and self.forecast.rival
     if peek and peek.tiles and self.state.phase == "fight" and not self.director.playing then
         local danger = peek.timer <= 1
-        for _, tl in ipairs(peek.tiles) do
-            if peek.kind == "stomp" then
-                BV.tileGlow(tl.x, tl.y, "danger", t, danger and 0.9 or 0.35)
-            else
+        local strength = danger and 0.9 or 0.35
+        if peek.kind == "farm" or peek.kind == "buy" then
+            for _, tl in ipairs(peek.tiles) do
                 local cx, cy = G.center(tl.x, tl.y)
                 love.graphics.setColor(1, 1, 1, 0.45 + 0.2 * math.sin(t * 4))
                 if peek.kind == "farm" then Assets.bug.ant:draw("idle1", cx, cy + G.T * 0.3, 0, -0.5 * G.unit, 0.5 * G.unit)
                 elseif peek.species then Assets.bug[peek.species]:draw("idle1", cx, cy + G.T * 0.3, 0, -0.5 * G.unit, 0.5 * G.unit) end
+            end
+        elseif peek.kind == "shower" then
+            for i, tl in ipairs(peek.tiles) do
+                local cx, cy = G.center(tl.x, tl.y)
+                love.graphics.setColor(1, 1, 1, (danger and 0.6 or 0.3) + 0.1 * math.sin(t * 4))
+                Assets.tiles:draw("puddle_" .. i, cx, cy, 0, G.T / 200 * 1.02)
+            end
+        elseif peek.kind == "tagteam" then
+            for _, tl in ipairs(peek.tiles) do BV.tileGlow(tl.x, tl.y, "area", t, strength) end
+        else
+            for _, tl in ipairs(peek.tiles) do BV.tileGlow(tl.x, tl.y, "danger", t, strength) end
+            local a = danger and 0.95 or 0.5
+            if peek.kind == "tantrum" and peek.dx and peek.tiles[1] then
+                local cx, cy = G.center(peek.tiles[1].x, peek.tiles[1].y)
+                Paper.arrow({ { cx, cy }, { cx + peek.dx * G.T * 0.9, cy - peek.dy * G.T * 0.9 } }, { color = C.magenta, alpha = a, width = 7 * G.unit, head = 16 * G.unit })
+            elseif (peek.kind == "shooter" or peek.kind == "dog") and peek.row then
+                local _, cy = G.center(1, peek.row)
+                local x1 = G.x + G.size * 0.92
+                if peek.kind == "shooter" and peek.id then
+                    local b = State.byId(self.state, peek.id)
+                    if b then x1 = G.center(b.x, b.y) end
+                end
+                Paper.arrow({ { G.x - G.T * 0.4, cy }, { x1, cy } }, { color = peek.kind == "dog" and C.orange or C.magenta, alpha = a, width = 7 * G.unit, head = 16 * G.unit })
             end
         end
     end
@@ -750,10 +880,22 @@ function Fight:boardOverlays()
         end
     end
     -- deploy hint: show your two rows
-    if s.phase == "deploy" and not self.armedJar then
+    if s.phase == "deploy" and not self.armedJar and not self.armedTrap then
         for _, p in ipairs(Q.homeTiles(s, "kid")) do
             if Kid.homeFree(s, p.x, p.y) then BV.tileGlow(p.x, p.y, "target", t, 0.35) end
         end
+    end
+    -- Bug Hunts: the jar can still be moved before the start
+    if s.phase == "deploy" and s.rule.id == "jar" and s.trapAt then
+        if self.armedTrap then
+            for _, p in ipairs(Q.homeTiles(s, "kid")) do
+                if Kid.trapFree(s, p.x, p.y) then
+                    local hov = self.hover.tile and self.hover.tile.x == p.x and self.hover.tile.y == p.y
+                    BV.tileGlow(p.x, p.y, hov and "hover" or "target", t)
+                end
+            end
+        end
+        BV.tileGlow(s.trapAt.x, s.trapAt.y, "ok", t, self.armedTrap and 1 or 0.55)
     end
 end
 
@@ -833,12 +975,15 @@ function Fight:drawHandArea()
         local x, y = 800 - w / 2, 770
         self.startRect = { x = x, y = y, w = w, h = h }
         local hov = self.mouse.x >= x and self.mouse.x <= x + w and self.mouse.y >= y and self.mouse.y <= y + h
+        local hunt = s.rule.id == "jar"
         Paper.panel(x, y + (hov and -6 or 0), w, h, { fill = C.green, seed = 41, r = 24, rot = 0.006 })
-        Text.display("START THE FIGHT!", 800, y + (hov and -6 or 0) + 30, 32, { 1, 1, 1 }, "center")
-        Text.body("Pick up to 3 bugs from the Jar, put them on your two rows. Click a placed bug to take it back.", x + 16, y + 74 + (hov and -6 or 0), 12.5, { 1, 1, 1 }, "center", w - 32)
+        Text.display(hunt and "START THE HUNT!" or "START THE FIGHT!", 800, y + (hov and -6 or 0) + 30, 32, { 1, 1, 1 }, "center")
+        local sub = hunt and "Up to 3 bugs go hunting; the rest stay home. Click your jar to move it."
+            or "Pick up to 3 bugs from the Jar, put them on your two rows. Click a placed bug to take it back."
+        Text.body(sub, x + 16, y + 74 + (hov and -6 or 0), 12.5, { 1, 1, 1 }, "center", w - 32)
         return
     end
-    self.hand:draw(self.hover.card, self.armed and self.armed.card)
+    self.hand:draw(self.hover.card, self.armed and self.armed.card, function(id) return self:cardInfo(id) end)
     -- deck / discard counters
     local d, di = #s.deck, #s.discard
     Text.body("deck " .. d .. "  ·  discard " .. di, 262, 852, 13, { 1, 0.95, 0.8 }, "left", nil, 2)
@@ -850,8 +995,12 @@ function Fight:drawHint()
     local armed = self.armed
     local text, title, extra, consequence
     local dismissable = false
+    local hunt = self.state.rule.id == "jar"
     if self.director.playing then
         title, text = "WATCH", "Time passes tick by tick. Hold SPACE (or click) to speed it up."
+    elseif self.armedTrap then
+        title, text = "YOUR JAR", "Click a tile of your two home rows to lay the jar there. Wild bugs that walk, land or get pushed onto it are caught."
+        extra = "Right click or Esc cancels."
     elseif self.armedJar then
         title, text = "RELEASE", self.state.phase == "deploy" and "Click one of your two home rows." or "Click an empty tile on your two home rows. It costs time: Light 1, Medium 2, Heavy 3."
         extra = "Right click or Esc cancels."
@@ -876,9 +1025,14 @@ function Fight:drawHint()
         end
     elseif h then
         title, text, dismissable = "PSST!", h.text, true
+    elseif self.state.phase == "deploy" and hunt then
+        title, text = "PICK YOUR HUNTING PARTY", "Up to 3 bugs go hunting with your jar. Knocked out on a hunt, a bug runs LOOSE: get it back into the jar before it crawls off the board."
+        extra = "Click a Jar bug, then a tile. Click the jar to move it."
     elseif self.state.phase == "deploy" then
         title, text = "PICK YOUR TEAM", "Put up to 3 Jar bugs on your two home rows (the bottom two). It's free now: once the fight starts, everything you do costs time."
         extra = "Click a Jar bug, then a tile. Click a placed bug to take it back."
+    elseif self.state.phase == "fight" and hunt then
+        title, text = "YOUR MOVE", "Lure, nudge or block wild bugs into your jar. Every action costs time. Close the lid (L) whenever you like: you keep what's inside."
     elseif self.state.phase == "fight" then
         title, text = "YOUR MOVE", "Play a card, release a bug, or WAIT. Every action costs time and time lets the bugs act."
     end
@@ -926,32 +1080,78 @@ function Fight:drawConfirm()
     end
 end
 
+local RESULT_WHY = {
+    cleared = "Every rival bug has scurried off.", crumbs = "The crumbs are home.", wiped = "All your bugs scurried off.",
+    sun = "Dinner time! Mom's calling and you didn't finish.", broke = "Somebody ran out of marbles!",
+    bell = "The Sun clock ran out: the bell rings.",
+}
+local HUNT_WHY = {
+    cleared = "No wild bug left in sight.", lid = "You closed the lid.", sun = "The Sun clock ran out.",
+    mower = "The lawnmower is here! Everybody runs for it.",
+}
+
 function Fight:drawResult()
     local r = self.result
+    local s = self.state
     local k = math.min(1, r.t * 3)
     love.graphics.setColor(0.17, 0.07, 0.22, 0.55 * k)
     love.graphics.rectangle("fill", 0, 0, 1600, 900)
-    local win = r.winner == "kid"
     local y = 150 + (1 - k) * -300
-    Paper.panel(420, y, 760, 420, { fill = win and { 1, 0.95, 0.7 } or { 0.9, 0.85, 1 }, seed = 61, r = 28, rot = -0.006, tape = true })
-    Text.display(win and "YOU WIN!" or "YOU LOSE", 800, y + 36, 62, win and C.magenta or C.purple, "center")
-    local rv = Rivals[self.state.rival.id]
-    love.graphics.setColor(1, 1, 1, 1)
-    Assets.drawKid(rv.portrait, win and "sad" or "happy", 580, y + 250, 210)
-    local why = ({ cleared = "Every rival bug has scurried off.", crumbs = "The crumbs are home.", wiped = "All your bugs scurried off.", sun = "Dinner time! Mom's calling. The Rule's score decided it." })[r.why] or ""
-    Text.body(why, 700, y + 120, 17, Text.INK, "left", 440)
-    Text.body('"' .. (win and rv.line.lose or rv.line.win) .. '"', 700, y + 170, 22, C.magentaDark, "left", 440)
-    -- the stakes
-    local bet = self.bet
-    love.graphics.setColor(1, 1, 1, 1)
-    local mw, mh = Assets.ui:size("icon_marble")
-    love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_marble, 716, y + 252, 0, 34 / mh, 34 / mh, mw / 2, mh / 2)
-    Text.display(win and ("YOU TAKE THE POT: +" .. bet .. (bet == 1 and " MARBLE" or " MARBLES")) or ("THEY KEEP THE POT: YOUR " .. bet .. (bet == 1 and " MARBLE" or " MARBLES")),
-        742, y + 241, 19, win and C.tealDark or C.magentaDark, "left", 420)
-    if r.lastFight then
-        Text.body("You can't cover another bet of " .. bet .. ": this was your last fight today. Rewind?", 700, y + 272, 13, C.red, "left", 440)
+    local INK = Text.INK
+    if self.mode == "hunt" then
+        local got = #s.caught
+        Paper.panel(420, y, 760, 420, { fill = got > 0 and { 1, 0.95, 0.7 } or { 0.9, 0.85, 1 }, seed = 61, r = 28, rot = -0.006, tape = true })
+        Text.display("HUNT OVER!", 800, y + 36, 58, got > 0 and C.magenta or C.purple, "center")
+        Text.body(HUNT_WHY[r.why] or "", 800, y + 112, 17, INK, "center")
+        if got > 0 then
+            local w = math.min(130, 640 / got)
+            local x0 = 800 - w * got / 2
+            for i, c in ipairs(s.caught) do
+                UI.bugDisc(c.species, x0 + (i - 0.5) * w, y + 200, 44, { ring = c.prize and C.yellow or C.teal, seed = 62 + i })
+                if c.prize then UI.tag("PRIZE!", x0 + (i - 0.5) * w, y + 140, 11, C.orange, { align = "center", seed = 70 + i }) end
+            end
+            Text.display("IN YOUR JAR: " .. got, 800, y + 256, 20, C.tealDark, "center")
+        else
+            Text.body("Your jar is empty this time.", 800, y + 180, 20, INK, "center")
+        end
+        -- what Hunt.settle will make of it: a Jar bug all of whose bugs got away is gone for good, else it naps
+        local gone, naps = {}, {}
+        for _, e in ipairs(self.run.jar) do
+            local f = s.field[e.uid]
+            if f and f.total > 0 and f.lost >= f.total then
+                local list = (f.escaped or 0) >= f.total and gone or naps
+                list[#list + 1] = Bugs[e.species].short
+            end
+        end
+        local ly = y + 284
+        if #gone > 0 then Text.body("Ran off into the wild for good: " .. table.concat(gone, ", ") .. ".", 800, ly, 14, C.magentaDark, "center"); ly = ly + 22 end
+        if #naps > 0 then Text.body("Back in the jar, worn out (napping): " .. table.concat(naps, ", ") .. ".", 800, ly, 14, C.purple, "center") end
+    else
+        local win, lose = r.winner == "kid", r.winner == "rival"
+        local rv = self:rivalDef()
+        Paper.panel(420, y, 760, 420, { fill = win and { 1, 0.95, 0.7 } or { 0.9, 0.85, 1 }, seed = 61, r = 28, rot = -0.006, tape = true })
+        local title = win and "YOU WIN!" or lose and "YOU LOSE" or "TIME'S UP!"
+        if self.mode == "duel" and s.rule.id ~= "showdown" then title = win and "ROUND WON!" or lose and "ROUND LOST" or title end
+        Text.display(title, 800, y + 36, 58, win and C.magenta or C.purple, "center")
+        love.graphics.setColor(1, 1, 1, 1)
+        Assets.drawKid(rv.portrait, win and "sad" or lose and "happy" or "neutral", 580, y + 250, 210)
+        Text.body(RESULT_WHY[r.why] or "", 700, y + 116, 17, INK, "left", 440)
+        Text.body('"' .. (win and rv.line.lose or lose and rv.line.win or rv.line.start) .. '"', 700, y + 160, 21, C.magentaDark, "left", 440)
+        love.graphics.setColor(1, 1, 1, 1)
+        if self.mode == "duel" then
+            UI.marble(716, y + 258, 34)
+            local delta = r.delta or 0
+            local line = delta > 0 and ("+" .. UI.plural(delta, "MARBLE")) or delta < 0 and (delta .. (delta == -1 and " MARBLE" or " MARBLES")) or "NO MARBLES MOVE"
+            Text.display(line .. "  ·  " .. r.marbles .. " LEFT", 742, y + 246, 20, delta >= 0 and C.tealDark or C.magentaDark, "left", 420)
+            if r.marbles <= 0 then
+                local who = self.run.bigSister and "Big Sister will step in, once." or "That's the end of your day."
+                Text.body("You'd be out of marbles! " .. who .. " Rewind?", 700, y + 280, 13, C.red, "left", 440)
+            end
+        else
+            Text.body("Just a warm-up: no marbles changed hands.", 700, y + 250, 15, C.tealDark, "left", 440)
+        end
     end
-    Text.body("Rewound " .. self.rewinds .. " time" .. (self.rewinds == 1 and "" or "s") .. ".   Ticks used: " .. self.state.tick .. ".", 700, y + 312, 13, { 0.4, 0.25, 0.5 }, "left", 440)
+    Text.body("Rewound " .. self.rewinds .. " time" .. (self.rewinds == 1 and "" or "s") .. ".   Ticks used: " .. s.tick .. ".", 700, y + 318, 13, { 0.4, 0.25, 0.5 }, "left", 440)
     local rc = self:resultRects()
     for name, rect in pairs(rc) do
         local hov = self.mouse.x >= rect.x and self.mouse.x <= rect.x + rect.w and self.mouse.y >= rect.y and self.mouse.y <= rect.y + rect.h
@@ -960,6 +1160,7 @@ function Fight:drawResult()
     end
 end
 
+--- The card over the board before the first move: what this fight is about and what is at stake.
 function Fight:drawIntro()
     local t = self.intro.t
     local k = math.min(1, t / 0.45)
@@ -967,31 +1168,67 @@ function Fight:drawIntro()
     local out = t > 4.1 and (t - 4.1) / 0.4 or 0
     love.graphics.setColor(0.17, 0.07, 0.22, 0.62 * math.min(1, t / 0.3) * (1 - out))
     love.graphics.rectangle("fill", 0, 0, 1600, 900)
-    local rv = Rivals[self.state.rival.id]
+    local s, run, enc = self.state, self.run, self.enc
+    local INK = Text.INK
+    local rule = RuleData[s.rule.id]
     local y = 230 - (1 - ease) * 560
     Paper.panel(260, y, 1080, 440, { fill = { 1, 0.95, 0.7 }, seed = 71, r = 30, rot = -0.006, tape = true })
-    local node = self.run.node or 1
-    Text.display("FIGHT " .. node .. " OF " .. #Run.NODES .. (self.enc.boss and "  -  THE BOSS" or ""), 320, y + 34, 18, C.magentaDark, "left")
-    Text.display(self.enc.name, 320, y + 66, 54, Text.INK, "left", 560)
-    Text.body(self.enc.place, 322, y + 136, 18, { 0.4, 0.25, 0.5 }, "left")
-    local rule = require("data.rules")[self.state.rule.id]
-    Text.display("RULE: " .. rule.name, 320, y + 190, 20, C.tealDark, "left", 560)
-    Text.body(rule.long, 322, y + 226, 15, Text.INK, "left", 540)
-    Text.body(self.enc.tutorial and "First time? Hints will pop up. Hover everything!" or "Click anywhere to begin.", 322, y + 380, 14, { 0.5, 0.35, 0.5 }, "left")
-    -- the rival, with a speech bubble
+    local head, title
+    if self.mode == "duel" then
+        head = "ROUND " .. enc.round .. " OF 3" .. (enc.leader and "  -  THE GANG LEADER" or "")
+        title = rule.name
+    elseif self.mode == "hunt" then
+        head = "BUG HUNT  -  BUZZ: " .. PD.buzz[enc.hunt.buzz].name
+        title = enc.name
+    else
+        head = "WARM-UP  -  FOR FAIR"
+        title = enc.name
+    end
+    Text.display(head, 320, y + 34, 18, C.magentaDark, "left", 560)
+    Text.display(title, 320, y + 66, 50, INK, "left", 560)
+    Text.body(enc.place, 322, y + 132, 18, { 0.4, 0.25, 0.5 }, "left")
+    if self.mode ~= "duel" then Text.display("RULE: " .. rule.name, 320, y + 176, 20, C.tealDark, "left", 560) end
+    Text.body(rule.long, 322, y + 210, 14.5, INK, "left", 540)
+    local foot
+    if self.mode == "prologue" then foot = "No marbles at stake. First time? Hints will pop up. Hover everything!"
+    elseif self.mode == "hunt" then foot = "No marbles at stake. Pick up to 3 bugs and lay your jar, then catch what you can."
+    elseif enc.house then foot = "HOUSE RULE: " .. Rivals[enc.rival].house.text
+    else foot = "Click anywhere to begin." end
+    Text.body(foot, 322, y + 384, 14, { 0.5, 0.35, 0.5 }, "left", 540)
+    if self.mode == "hunt" then
+        -- the prize, and nature's move in the bubble
+        local nat = self:natureDef()
+        Paper.disc(1130, y + 220, 150, C.yellow, { seed = 5, shadow = true, line = 5 })
+        Paper.disc(1130, y + 220, 138, C.cream, { seed = 6, line = 0 })
+        love.graphics.setColor(1, 1, 1, 1)
+        Assets.drawPortrait(enc.hunt.prize, 1130, y + 220 + math.sin(t * 3) * 3, 240)
+        UI.tag("THE PRIZE: " .. Bugs[enc.hunt.prize].short, 1130, y + 360, 16, C.orange, { align = "center", seed = 9 })
+        Paper.panel(930, y - 36, 360, 76, { fill = C.cream, seed = 8, r = 20, rot = 0.01 })
+        Text.display(nat.name, 950, y - 24, 12, C.magentaDark, "left", 320)
+        Text.body(nat.sig.name .. (nat.sig.once and (" arrives in " .. nat.sig.timer .. " ticks.") or (" every " .. nat.sig.timer .. " ticks.")), 950, y + 1, 15, INK, "left", 320)
+        return
+    end
+    local rv = self:rivalDef()
     Paper.disc(1130, y + 220, 150, C.magenta, { seed = 5, shadow = true, line = 5 })
     Paper.disc(1130, y + 220, 138, { 1, 0.84, 0.55 }, { seed = 6, line = 0 })
     love.graphics.setColor(1, 1, 1, 1)
-    Assets.drawKid(rv.portrait, "neutral", 1130, y + 232 + math.sin(t * 3) * 3, 300)
+    local mood = enc.mood == "cocky" and "happy" or enc.mood == "angry" and "sad" or "neutral"
+    Assets.drawKid(rv.portrait, mood, 1130, y + 232 + math.sin(t * 3) * 3, 300)
     Paper.panel(930, y - 36, 360, 76, { fill = C.cream, seed = 8, r = 20, rot = 0.01 })
     Text.display(rv.name, 950, y - 24, 12, C.magentaDark, "left", 320)
-    Text.body('"' .. rv.line.start .. '"', 950, y + 1, 17, Text.INK, "left", 320)
-    -- the stakes
-    love.graphics.setColor(1, 1, 1, 1)
-    local mw, mh = Assets.ui:size("icon_marble")
-    love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_marble, 1004, y + 398, 0, 36 / mh, 36 / mh, mw / 2, mh / 2)
-    Text.display("POT: " .. (2 * self.bet) .. " MARBLES", 1030, y + 386, 22, C.magentaDark, "left", 290)
-    Text.body(rv.name .. " bets " .. self.bet .. ", and so do you.", 1030, y + 412, 12.5, { 0.4, 0.25, 0.5 }, "left", 300)
+    Text.body('"' .. rv.line.start .. '"', 950, y + 1, 17, INK, "left", 320)
+    if self.mode == "duel" then
+        love.graphics.setColor(1, 1, 1, 1)
+        UI.marble(1004, y + 398, 36)
+        if s.rule.id == "showdown" then
+            Text.display("EVERY HIT MOVES A MARBLE", 1030, y + 386, 18, C.magentaDark, "left", 290)
+        else
+            Text.display("BOTH BET " .. (self.stake or 0) .. "  ·  POT " .. 2 * (self.stake or 0), 1030, y + 386, 20, C.magentaDark, "left", 290)
+            local allIn = run.duel and Duel.allIn(run)
+            local line = allIn == "kid" and "You're ALL IN!" or allIn == "rival" and "They're ALL IN!" or allIn == "both" and "You're BOTH all in!" or ""
+            Text.body(line, 1030, y + 412, 13, allIn == "kid" and C.red or C.tealDark, "left", 300)
+        end
+    end
 end
 
 function Fight:drawCursor(x, y, time)

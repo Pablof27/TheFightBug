@@ -145,6 +145,17 @@ function BV.props(view, actors, hiddenIds, time, extra)
                         end
                     end)
                 end
+                if c.trap then
+                    -- Bug Hunts: your jar, lying on its side
+                    addProp(list, cy - G.T * 0.05, function()
+                        love.graphics.setColor(Paper.C.ink[1], Paper.C.ink[2], Paper.C.ink[3], 0.3)
+                        love.graphics.ellipse("fill", cx, cy + G.T * 0.3, G.T * 0.38, G.T * 0.11)
+                        local w, h = Assets.ui:size("icon_jar")
+                        local sc = G.T * 0.8 / math.max(w, h)
+                        love.graphics.setColor(1, 1, 1, 1)
+                        love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_jar, cx, cy + G.T * 0.1, -math.pi / 2, sc, sc, w / 2, h / 2)
+                    end)
+                end
             end
         end
     end

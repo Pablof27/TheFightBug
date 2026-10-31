@@ -1,7 +1,8 @@
 -- The three save slots. Each is a JSON file in LÖVE's save directory (saves/slot1.json ...) in the format of sim/save.lua.
--- A run remembers its slot (run.slot) and is saved at the calm moments of the day: when it starts, after every fight and
--- after every purchase at the Swap Shop. Leaving in the middle of a fight keeps the save from before it. When the day is
--- over the file stays in its slot as a record of how it ended, until it is erased or a new game replaces it.
+-- A run remembers its slot (run.slot) and is saved at the calm moments of the day (client/flow.lua): when it starts,
+-- after every fight, and after every choice at the park, at the van and between the rounds of a duel. Leaving in the
+-- middle of a fight keeps the save from before it. When the day is over the file stays in its slot as a record of how it
+-- ended, until it is erased or a new game replaces it.
 
 local Save = require("sim.save")
 local Run = require("sim.run")

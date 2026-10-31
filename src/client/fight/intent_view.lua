@@ -114,6 +114,10 @@ function Intent.draw(scene, forecast, hoverId, changed, time)
                 queue(a, "icon_undo", C.purple, chipAlpha)
             elseif it.kind == "ready" then
                 queue(a, "icon_eye", C.yellow, chipAlpha)
+            elseif it.kind == "crawl" then
+                queue(a, "icon_foot", C.orange, chipAlpha)
+            elseif it.kind == "escape" then
+                queue(a, "fx_sweat", C.red, chipAlpha, "!")
             end
             -- intent changed by the card being previewed
             if changed and changed[id] then

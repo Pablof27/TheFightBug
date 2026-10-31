@@ -309,77 +309,444 @@ test("forecast of the next tick equals what really happens", function()
     eq(Forecast.signature(s), predicted)
 end)
 
-print("Run layer: marbles are the stakes")
+test("the Sun clock running out is a loss, even when you are ahead", function()
+    for _, rule in ipairs({ "lbs", "crumbs", "zumo" }) do
+        local s = arena({ rule = rule, kid = { { species = "stag", x = 1, y = 1 }, { species = "stag", x = 2, y = 1 } }, rival = { { species = "ant", x = 6, y = 6, timer = 99 } } })
+        if rule == "crumbs" then s.rule.score.kid = 4 end
+        s.tick = s.sunLimit - 1
+        Kid.wait(s)
+        eq(s.winner, "rival", rule); eq(s.why, "sun", rule)
+    end
+end)
 
-local function lawn() return Fight.new(Encounters[2], { jar = {}, deck = {}, seed = 3 }) end
-local function itemOf(Shop, run, id)
-    for _, it in ipairs(Shop.stock(run)) do if it.id == id then return it end end
-    error("not in stock: " .. id)
+print("Bug Hunts: the jar is a trap")
+
+local Run = require("sim.run")
+local Duel = require("sim.duel")
+local Hunt = require("sim.hunt")
+local Shop = require("sim.shop")
+local Park = require("sim.park")
+local Save = require("sim.save")
+local Path = require("sim.path")
+local Instincts = require("sim.instincts")
+local ParkData = require("data.park")
+
+-- A hunt on an empty 6x6 board (scripted hand, so it starts at once) with the jar laid on `trap`.
+local function hunt(o)
+    local s = arena({ rule = "jar", rivalKid = o.nature or "bird", kid = o.kid, rival = o.rival, hand = o.hand, layout = o.layout })
+    local t = o.trap or { x = 3, y = 2 }
+    Grid.cell(s, t.x, t.y).trap = true
+    s.trapAt = { x = t.x, y = t.y }
+    s.hunt = { spot = "bucket", buzz = 0 }
+    s.rival.timer = 99
+    for k, v in pairs(o.items or {}) do s.items[k] = v end
+    return s
 end
 
-test("a run starts with 5 marbles and no Spirit; every rival kid plays for a fixed bet", function()
-    local Run = require("sim.run")
-    local run = Run.new(1)
-    eq(run.marbles, 5); eq(run.spirit, nil, "no Spirit any more"); eq(run.jarSlots, 6)
-    eq(Run.bet(run), 2, "the Bully bets 2")
-    run.node = 2; eq(Run.bet(run), 3, "Ant Farm Girl bets 3")
-    run.node = 3; eq(Run.bet(run), 5, "the Rich Kid bets 5")
+test("a wild bug that walks into the jar is caught; your bugs walk past it but never stop on it", function()
+    local s = hunt({ kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 3, y = 4, timer = 0 } }, hand = { "crumb" } })
+    play(s, "crumb", { x = 3, y = 2 })          -- a lure inside the jar
+    eq(#s.caught, 1, "caught"); eq(s.caught[1].species, "ant"); eq(s.rule.score.kid, 1)
+    eq(#events(s, "catch"), 1); eq(Q.count(s, "rival"), 0)
+    eq(s.winner, "kid", "no wild bug left and nobody loose: the hunt is over"); eq(s.why, "cleared")
+    local mine = find(s, "ant", "kid")
+    truthy(not Path.canEnter(s, mine, 3, 2), "can't stop on the jar")
+    truthy(Path.canEnter(s, mine, 3, 2, { pass = true }), "but can walk past it")
+    truthy(not Path.canLand(s, mine, 3, 2))
 end)
 
-test("win and you take the pot, lose and the rival keeps it; can't cover the bet and the day is over", function()
-    local Run = require("sim.run")
-    local run = Run.new(1)
-    local s = sandbox(); s.winner = "kid"
-    local sum = Run.finish(run, s)
-    eq(sum.bet, 2); eq(sum.pot, 4, "the rival matched the bet"); eq(sum.marbles, 2)
-    eq(run.marbles, 7); eq(run.wins, 1); eq(run.node, 2, "on to the next fight")
-    s = lawn(); s.winner = "rival"
-    sum = Run.finish(run, s)
-    eq(sum.marbles, -3, "Ant Farm Girl's bet"); eq(run.marbles, 4); eq(run.node, 2, "a rematch, same fight")
-    truthy(not Run.over(run), "4 marbles still cover her bet of 3")
-    s = lawn(); s.winner = "rival"
-    Run.finish(run, s)
-    eq(run.marbles, 1); truthy(Run.over(run), "1 marble can't cover a bet of 3: the day is over")
+test("a wild bug pushed into the jar is caught; one of yours pushed at it bumps", function()
+    local s = hunt({ kid = { { species = "cricket", x = 2, y = 2, timer = 9, uid = 1 } },
+        rival = { { species = "pillbug", x = 3, y = 3, timer = 9 }, { species = "ant", x = 6, y = 6, timer = 9 } }, hand = { "flick", "flick" } })
+    play(s, "flick", find(s, "pillbug", "rival").id, { dx = 0, dy = -1 })
+    eq(#s.caught, 1); eq(s.caught[1].species, "pillbug")
+    local cricket = find(s, "cricket", "kid")
+    play(s, "flick", cricket.id, { dx = 1, dy = 0 })
+    eq(cricket.x, 2, "bumped into the jar"); eq(#events(s, "bump"), 1)
+    eq(s.winner, nil, "a wild ant is still out there")
 end)
 
-test("the Swap Shop opens after the first fight, sells each thing once and never touches the next bet", function()
-    local Run, Shop = require("sim.run"), require("sim.shop")
-    local run = Run.new(1)
-    truthy(not Shop.isOpen(run), "no shop before the scripted first fight")
-    run.node, run.marbles = 2, 7
-    truthy(Shop.isOpen(run)); eq(#Shop.stock(run), 8)
-    local deck = #run.deck
-    local leaf = itemOf(Shop, run, "leaf")
-    truthy(Shop.buy(run, leaf)); eq(run.marbles, 7 - leaf.price); eq(#run.deck, deck + 1); eq(run.deck[#run.deck], "leaf")
-    local ok, why = Shop.buy(run, leaf)
-    truthy(not ok); eq(why, "sold")
-    ok, why = Shop.buy(run, itemOf(Shop, run, "stag"))
-    truthy(not ok); eq(why, "reserve", "5 - 4 would leave less than her bet of 3"); eq(run.marbles, 5)
-    truthy(Shop.buy(run, itemOf(Shop, run, "blow"))); eq(run.marbles, 3)
-    for _, it in ipairs(Shop.stock(run)) do truthy(not Shop.check(run, it), it.id .. " must not be for sale any more") end
-    truthy(Run.canCover(run), "shopping never leaves you short of the next bet")
-    run.marbles = 20
-    truthy(Shop.buy(run, itemOf(Shop, run, "shove")))
-    run.node = 3
-    truthy(Shop.check(run, itemOf(Shop, run, "shove")), "the next stop has its own stock, sold separately")
+test("a bug of yours knocked out on a hunt runs loose: ignored by the wild, it crawls off the board unless the jar takes it back", function()
+    local s = hunt({ kid = { { species = "spider", x = 2, y = 2, timer = 9, uid = 5 } },
+        rival = { { species = "wasp", x = 2, y = 3, timer = 0 }, { species = "ant", x = 6, y = 6, timer = 9 } }, trap = { x = 5, y = 1 } })
+    Kid.wait(s)
+    local spider = find(s, "spider", "kid")
+    truthy(spider and spider.loose, "loose, not gone"); eq(spider.hp, 0); eq(#events(s, "loose"), 1); eq(s.stats.scurried.kid, 0)
+    local wasp = find(s, "wasp", "rival")
+    local it = Instincts.decide(s, wasp)
+    truthy(not (it.target and it.target.id == spider.id), "the wild bugs ignore a loose bug")
+    it = Instincts.decide(s, spider)
+    eq(it.kind, "crawl"); eq(it.to.x, 1, "the nearest way out is left (ties: left first)"); eq(it.to.y, 2)
+    for _ = 1, 8 do if not spider.gone then Kid.wait(s) end end
+    truthy(spider.gone, "it got away"); eq(s.field[5].escaped, 1); eq(#events(s, "escape") > 0, true)
+    -- the same, but the jar is in its way: it crawls right back in
+    s = hunt({ kid = { { species = "spider", x = 2, y = 2, timer = 9, uid = 5 } },
+        rival = { { species = "wasp", x = 2, y = 3, timer = 0 }, { species = "ant", x = 6, y = 6, timer = 9 } }, trap = { x = 1, y = 2 } })
+    for _ = 1, 4 do Kid.wait(s) end
+    eq(s.field[5].rescued, 1, "rescued"); eq(s.field[5].escaped, nil)
 end)
 
-test("bugs need room in the Jar, a bigger Jar adds a slot, a nap needs a Tired bug", function()
-    local Run, Shop = require("sim.run"), require("sim.shop")
+test("a hunt can't be lost: the lid, the Sun clock or the lawnmower end it, and whoever is still loose stays in the wild", function()
+    local s = hunt({ kid = { { species = "spider", x = 2, y = 2, timer = 9, uid = 5 } },
+        rival = { { species = "wasp", x = 2, y = 3, timer = 0 }, { species = "ant", x = 6, y = 6, timer = 9 } } })
+    Kid.wait(s)
+    truthy(find(s, "spider", "kid").loose)
+    truthy(Kid.closeLid(s)); eq(s.winner, "kid"); eq(s.why, "lid"); eq(s.field[5].escaped, 1, "left behind")
+    s = hunt({ kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 6, y = 6, timer = 99 } } })
+    s.tick = s.sunLimit - 1
+    Kid.wait(s); eq(s.winner, "kid"); eq(s.why, "sun")
+    s = hunt({ nature = "mower", kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 6, y = 6, timer = 99 } } })
+    s.rival.timer = 0
+    Kid.wait(s); Kid.wait(s); eq(s.why, "mower")
+end)
+
+test("nature's moves: the blackbird freezes everyone, the dog pushes the busiest row, the rain makes the puddles it showed", function()
+    local s = hunt({ kid = { { species = "ant", x = 1, y = 1, timer = 5, uid = 1 } }, rival = { { species = "wasp", x = 4, y = 5, timer = 5 } } })
+    s.rival.timer = 0
+    Kid.wait(s); Kid.wait(s)
+    eq(find(s, "ant", "kid").timer, 5 - 2 + 1, "+1"); eq(find(s, "wasp", "rival").timer, 5 - 2 + 2, "flyers +2")
+    s = hunt({ nature = "dog", kid = { { species = "ant", x = 1, y = 3, timer = 9, uid = 1 } }, rival = { { species = "pillbug", x = 4, y = 3, timer = 9 }, { species = "ant", x = 6, y = 6, timer = 9 } } })
+    s.rival.timer = 0
+    eq(require("sim.rival").peek(s).row, 3, "the busiest row, shown in advance")
+    Kid.wait(s); Kid.wait(s)
+    eq(find(s, "ant", "kid").y, 4); eq(find(s, "pillbug", "rival").y, 4)
+    s = hunt({ nature = "shower", kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 6, y = 6, timer = 9 } } })
+    require("sim.rival").pick(s)
+    local shown = require("sim.rival").peek(s).tiles
+    eq(#shown, 2, "two puddles shown in advance")
+    s.rival.timer = 0
+    Kid.wait(s); Kid.wait(s)
+    for _, t in ipairs(shown) do truthy(Grid.cell(s, t.x, t.y).puddle, "a puddle where it was shown") end
+end)
+
+test("pocket items on a hunt: the Bug Net catches flyers passing over the jar, the Pooter sucks in a Light neighbour, the Sweep Net scoops hidden bugs", function()
+    local s = hunt({ items = { net = true }, kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, trap = { x = 3, y = 3 },
+        rival = { { species = "wasp", x = 3, y = 5, timer = 0 }, { species = "ant", x = 6, y = 6, timer = 9 } }, hand = { "sugar" } })
+    play(s, "sugar", { x = 3, y = 1 })     -- the wasp flies over the jar to get it
+    eq(#s.caught, 1); eq(events(s, "catch")[1].how, "net")
+    s = hunt({ items = { pooter = true }, kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } },
+        rival = { { species = "ant", x = 3, y = 3, timer = 9 }, { species = "stag", x = 6, y = 6, timer = 9 } } })
+    Kid.wait(s)
+    eq(#s.caught, 1); eq(events(s, "catch")[1].how, "pooter")
+    s = hunt({ items = { sweep = true }, layout = { "......", "......", "......", "....g.", "......", "......" },
+        kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "cricket", x = 5, y = 3, timer = 9 }, { species = "ant", x = 6, y = 6, timer = 9 } }, hand = { "flick" } })
+    truthy(Q.isHidden(s, find(s, "cricket", "rival")))
+    play(s, "flick", find(s, "cricket", "rival").id, { dx = 0, dy = 1 })
+    eq(#s.caught, 1); eq(events(s, "catch")[1].how, "sweep")
+end)
+
+print("Duels: the poorer side goes all in")
+
+local function newDay(seed)
+    local run = Run.new(seed or 1)
+    Run.endPrologue(run)
+    Run.pickZone(run, 1)
+    return run
+end
+local function settle(run, winner, o)
+    o = o or {}
+    return Duel.settle(run, { winner = winner, why = o.why or (winner == "kid" and "cleared" or winner == "rival" and "wiped" or "bell"),
+        field = o.field or {}, stake = Duel.stake(run), keeps = o.keeps })
+end
+
+test("a day starts with 10 marbles, the warm-up, then two zones, each with its Gang leader", function()
     local run = Run.new(1)
-    run.node, run.marbles = 2, 30
-    Run.addBug(run, "pillbug")
-    eq(#run.jar, run.jarSlots, "the Jar is full")
-    local wasp = itemOf(Shop, run, "wasp")
-    local ok, why = Shop.buy(run, wasp)
-    truthy(not ok); eq(why, "jar_full")
-    truthy(Shop.buy(run, itemOf(Shop, run, "jar"))); eq(run.jarSlots, 7)
-    truthy(Shop.buy(run, wasp)); eq(run.jar[#run.jar].species, "wasp"); truthy(run.seen.wasp, "in the Bug Journal")
-    local nap = itemOf(Shop, run, "nap")
-    ok, why = Shop.buy(run, nap)
-    truthy(not ok); eq(why, "nobody_tired")
-    run.jar[1].tired = true
-    truthy(Shop.buy(run, nap)); eq(run.jar[1].tired, nil, "rested")
+    eq(run.marbles, 10); eq(run.phase, "prologue"); eq(#run.jar, 5); eq(run.jarSlots, 6); eq(run.spirit, nil)
+    eq(Run.prologueEncounter().id, "sandbox", "the warm-up is the GDD's worked example")
+    Run.endPrologue(run)
+    eq(run.phase, "zone"); eq(#run.offer, 2)
+    truthy(run.offer[1].zone ~= run.offer[2].zone)
+    local leaders = { [run.offer[1].leader] = true, [run.offer[2].leader] = true }
+    truthy(leaders.bully and leaders.antgirl, "the Morning's two Gang leaders")
+    Run.pickZone(run, 2)
+    eq(run.phase, "free"); eq(run.window, 1); eq(run.leader, run.offer == nil and run.leader)
+    eq(#run.kids, 2); truthy(run.kids[1] ~= run.leader and run.kids[2] ~= run.leader)
+    eq(run.stacks[run.leader], 14)
+    local again = newDay(1)
+    eq(again.kids[1], (function() local r = Run.new(1); Run.endPrologue(r); Run.pickZone(r, 1); return r.kids[1] end)(), "same seed, same day")
+end)
+
+test("the bet is the smaller stack, the winner takes it, and a broke rival ends the duel", function()
+    local run = newDay(1)
+    local kid = run.kids[1]
+    truthy(Duel.start(run, kid)); eq(run.phase, "duel")
+    run.marbles, run.stacks[kid] = 10, 4
+    eq(Duel.stake(run), 4); eq(Duel.allIn(run), "rival")
+    local rec = settle(run, "kid")
+    eq(run.marbles, 14); eq(run.stacks[kid], 0); eq(rec.delta, 4)
+    eq(run.duel.over.why, "broke"); truthy(#run.duel.offer > 0, "a broke kid makes you an offer")
+    truthy(Duel.leave(run)); eq(run.phase, "free"); eq(run.window, 2, "on to the van and the Gang leader"); truthy(Shop.isOpen(run))
+end)
+
+test("the rematch ladder: the loser picks the game, then the Showdown ends the duel whatever happens", function()
+    local run = newDay(2)
+    local kid = run.kids[1]
+    Duel.start(run, kid)
+    run.marbles, run.stacks[kid] = 10, 4
+    local first = run.duel.rule
+    settle(run, "rival")
+    eq(run.marbles, 6); eq(run.stacks[kid], 8); eq(run.duel.round, 2); eq(run.duel.mood, "cocky")
+    truthy(run.duel.pick, "you lost: you pick the next game"); eq(Duel.encounter(run), nil, "not before you pick")
+    for _, r in ipairs(run.duel.pick) do truthy(r ~= first, "never the one just played") end
+    truthy(Duel.pickRule(run, run.duel.pick[1]))
+    eq(Duel.stake(run), 6); eq(Duel.allIn(run), "kid")
+    settle(run, "kid")
+    eq(run.marbles, 12); eq(run.stacks[kid], 2); eq(run.duel.round, 3); eq(run.duel.mood, "angry")
+    eq(Duel.rule(run), "showdown"); eq(Duel.stake(run), 0)
+    local enc = Duel.encounter(run)
+    eq(enc.rule, "showdown"); eq(enc.keeps.kid, 12); eq(enc.keeps.rival, 2); truthy(enc.keeps.endOnBroke)
+    settle(run, "draw", { keeps = { kid = 13, rival = 1 } })
+    eq(run.duel.over.why, "bell", "the Showdown ends the duel"); eq(run.marbles, 13); eq(run.stacks[kid], 1)
+end)
+
+test("the rival who loses round 1 picks its second favourite; Little Sibling picks at random, but always the same way", function()
+    local run = newDay(3)
+    local kid = run.kids[1]
+    Duel.start(run, kid)
+    run.marbles, run.stacks[kid] = 3, 9
+    settle(run, "kid")
+    eq(run.duel.rule, Duel.favourite(run, kid, 2, true)); eq(run.duel.pick, nil)
+    local a, b = Duel.favourite(run, "sibling", 1), Duel.favourite(run, "sibling", 1)
+    eq(a, b, "seeded")
+end)
+
+test("in the Showdown every hit moves a marble, and a side that runs out is broke", function()
+    local s = arena({ rule = "showdown", kid = { { species = "ant", x = 3, y = 2, timer = 9, uid = 1 } }, rival = { { species = "wasp", x = 3, y = 3, timer = 0 } } })
+    s.keeps = { kid = 1, rival = 5, endOnBroke = true }
+    Kid.wait(s)
+    eq(#events(s, "marble"), 1); eq(s.keeps.kid, 0); eq(s.keeps.rival, 6)
+    eq(s.winner, "rival"); eq(s.why, "broke")
+    s = arena({ rule = "showdown", kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 6, y = 6, timer = 99 } } })
+    s.keeps = { kid = 3, rival = 3, endOnBroke = true }
+    s.tick = s.sunLimit - 1
+    Kid.wait(s); eq(s.winner, "draw"); eq(s.why, "bell", "the bell rings: the duel is over")
+    -- a hit has to land: the pill bug curls up (NOPE!) and keeps its marble
+    s = arena({ rule = "showdown", kid = { { species = "pillbug", x = 3, y = 2, timer = 9, uid = 1 } }, rival = { { species = "wasp", x = 3, y = 3, timer = 0 } } })
+    s.keeps = { kid = 4, rival = 4, endOnBroke = true }
+    Kid.wait(s)
+    eq(#events(s, "attack"), 1); eq(#events(s, "marble"), 0, "a blocked attack moves no marble"); eq(s.keeps.kid, 4)
+end)
+
+test("napping: bugs knocked out in a round sit out the next one, on both sides, then wake up", function()
+    local run = newDay(4)
+    local kid = run.kids[1]
+    Duel.start(run, kid)
+    run.marbles, run.stacks[kid] = 10, 9
+    local ant = run.jar[1]
+    eq(ant.species, "ant")
+    local rec = settle(run, "rival", { field = { [ant.uid] = { total = 3, lost = 3 }, r1 = { total = 1, lost = 1 } } })
+    truthy(ant.nap, "your colony naps"); truthy(run.duel.roster[1].nap, "so does their first bug")
+    eq(rec.napped[1], "ant"); eq(rec.rnapped[1], run.duel.roster[1].species)
+    for _, e in ipairs(Run.available(run)) do truthy(e.uid ~= ant.uid, "a napping bug can't play") end
+    Duel.pickRule(run, run.duel.pick[1])
+    for _, t in ipairs(Duel.encounter(run).rivalTeam) do truthy(t.uid ~= "r1", "theirs neither") end
+    settle(run, "kid")
+    eq(ant.nap, nil, "it sat out a round: awake again"); eq(run.duel.roster[1].nap, nil)
+end)
+
+test("knockouts on a hunt nap through every hunt and the first round of the next duel", function()
+    local run = newDay(5)
+    local mantis = run.jar[3]
+    local sum = Hunt.settle(run, { hunt = { spot = Hunt.spots(run)[1] }, caught = {}, met = {}, field = { [mantis.uid] = { total = 1, lost = 1, rescued = 1 } } })
+    eq(sum.napped[1], "mantis"); truthy(mantis.nap)
+    eq(run.buzz, 1, "the zone is stirred up")
+    Duel.start(run, run.kids[1])
+    settle(run, "rival")
+    eq(mantis.nap, nil, "it sat out round 1")
+    -- every bug of an entry got away: it's gone for good
+    run = newDay(5)
+    local spider = run.jar[5]
+    sum = Hunt.settle(run, { hunt = { spot = Hunt.spots(run)[1] }, caught = {}, met = {}, field = { [spider.uid] = { total = 1, lost = 1, escaped = 1 } } })
+    eq(sum.lost[1], "spider"); eq(#run.jar, 4); eq(run.lost[1], "spider")
+end)
+
+test("the kid you don't pick plays the Gang leader and loses: their marbles join the leader's", function()
+    local run = newDay(6)
+    local a, b = run.kids[1], run.kids[2]
+    local leader, before, fed = run.leader, run.stacks[run.leader], run.stacks[b]
+    Duel.start(run, a)
+    eq(run.stacks[leader], before + fed); eq(run.stacks[b], 0); eq(run.fed.kid, b)
+end)
+
+test("Big Sister: the first time you're broke she lends you 3 marbles and ends the duel; the next time you go home", function()
+    local run = newDay(7)
+    local kid = run.kids[1]
+    Duel.start(run, kid)
+    run.marbles, run.stacks[kid] = 2, 10
+    local rec = settle(run, "rival")
+    truthy(rec.sister); eq(run.marbles, 3); eq(run.bigSister, false); eq(run.duel.over.why, "sister")
+    Duel.leave(run)
+    eq(run.phase, "free"); eq(run.window, 2)
+    Duel.start(run, run.leader)
+    settle(run, "rival")
+    eq(run.duel.over.why, "home")
+    Duel.leave(run)
+    truthy(Run.over(run)); eq(run.result.won, false)
+end)
+
+test("a side that can't field a single bug forfeits the round: it loses the bet", function()
+    local run = newDay(8)
+    local kid = run.kids[1]
+    Duel.start(run, kid)
+    run.marbles, run.stacks[kid] = 10, 4
+    for _, e in ipairs(run.jar) do e.nap = true end
+    eq(Duel.forfeitSide(run), "kid")
+    local rec = Duel.forfeit(run)
+    eq(rec.why, "forfeit"); eq(run.marbles, 6); eq(run.stacks[kid], 8)
+end)
+
+print("The day: hunts, the van, the acts")
+
+test("a whole day: three acts of zone, kid, van and Gang leader, a pocket item after the first two, then sunset", function()
+    local run = newDay(9)
+    for act = 1, 3 do
+        eq(run.act, act); eq(run.phase, "free")
+        local kid = run.kids[1]
+        Duel.start(run, kid)
+        run.stacks[kid] = 1
+        settle(run, "kid"); Duel.leave(run)
+        eq(run.window, 2); truthy(run.van)
+        Duel.start(run, run.leader)
+        run.marbles, run.stacks[run.leader] = 20, 5
+        settle(run, "kid"); Duel.leave(run)
+        if act < 3 then
+            eq(run.phase, "reward"); eq(#run.rewardOffer, 3)
+            local slots = run.jarSlots
+            truthy(Run.pickReward(run, 1)); eq(#run.items, act); eq(run.jarSlots, slots + 1)
+            eq(run.phase, "zone"); Run.pickZone(run, 1)
+        end
+    end
+    truthy(Run.over(run)); eq(run.result.won, true); eq(run.result.why, "sunset")
+end)
+
+test("every hunt stirs the zone up (meaner groups, rarer prizes); a duel calms it down", function()
+    local run = newDay(10)
+    local spot = Hunt.spots(run)[1]
+    local calm = Hunt.group(run, spot)
+    eq(calm.timer, 1, "Buzz 0: they haven't noticed you"); eq(#calm.guards, 0); eq(calm.bite, 0)
+    run.buzz = 3
+    local busy = Hunt.group(run, spot)
+    eq(#busy.guards, 1); eq(busy.bite, 1); eq(busy.prize, Hunt.prizeAt(spot, 3))
+    eq(busy.common[1], calm.common[1], "the same group, only meaner"); eq(busy.common[2], calm.common[2])
+    local enc = Hunt.encounter(run, spot)
+    eq(enc.rule, "jar"); eq(enc.w, 5); eq(#enc.rivalTeam, 4)
+    local prizes = 0
+    for _, t in ipairs(enc.rivalTeam) do if t.prize then prizes = prizes + 1 end end
+    eq(prizes, 1)
+    Hunt.settle(run, { hunt = { spot = spot }, caught = {}, met = {}, field = {} })
+    eq(run.buzz, 4); eq(run.visits[spot], 1)
+    truthy(Hunt.group(run, spot).common[1] ~= nil, "the spot shows its next group")
+    Duel.start(run, run.kids[1]); run.stacks[run.kids[1]] = 1; settle(run, "kid"); Duel.leave(run)
+    eq(run.buzz, 0)
+end)
+
+test("a caught bug merges into one of its kind (a bigger one), otherwise takes a slot; a full Jar must let someone go", function()
+    local run = newDay(11)
+    eq(Run.addCaught(run, "mantis"), "merged"); truthy(run.jar[3].big)
+    eq(Run.addCaught(run, "mantis"), "added"); eq(#run.jar, 6)
+    Run.addCaught(run, "wasp")
+    eq(Run.overflow(run), 1)
+    truthy(not Duel.start(run, run.kids[1]), "not with a Jar too full"); truthy(not Hunt.can(run))
+    truthy(Run.letGo(run, run.jar[1].uid)); eq(Run.overflow(run), 0); eq(run.released[1], "ant")
+    -- bigger bugs in a fight: one more heart, or one more ant
+    run.jar[1].big = true     -- now the pill bug
+    local s = Fight.new(Hunt.encounter(run, Hunt.spots(run)[1]), { jar = Run.available(run), deck = run.deck, seed = 1 })
+    Kid.deploy(s, 1, 2, 2)
+    eq(find(s, "pillbug", "kid").maxHp, 4)
+end)
+
+test("the van: seeded stock, prices grow with the act, never your last marble; restock, throw a card away, an ice-cream break", function()
+    local run = newDay(12)
+    Duel.start(run, run.kids[1]); run.stacks[run.kids[1]] = 1; settle(run, "kid"); Duel.leave(run)
+    local a, b = Shop.stock(run), Shop.stock(run)
+    eq(#a, 11); for i = 1, #a do eq(a[i].id, b[i].id) end
+    local card = a[1]
+    eq(card.price, require("data.cards")[card.id].price, "Morning prices")
+    run.marbles = card.price
+    local ok, why = Shop.buy(run, card); truthy(not ok); eq(why, "last", "never your last marble")
+    run.marbles = 30
+    truthy(Shop.buy(run, card)); eq(run.deck[#run.deck], card.id)
+    ok, why = Shop.buy(run, card); eq(why, "sold")
+    local remove
+    for _, it in ipairs(a) do if it.kind == "remove" then remove = it end end
+    local n = #run.deck
+    truthy(Shop.buy(run, remove, 1)); eq(#run.deck, n - 1)
+    truthy(Shop.restock(run)); truthy(Shop.stock(run)[1].key ~= a[1].key)
+    run.jar[1].nap = true
+    local cream
+    for _, it in ipairs(Shop.stock(run)) do if it.kind == "icecream" then cream = it end end
+    truthy(Shop.buy(run, cream)); eq(run.jar[1].nap, nil)
+    run.act = 3
+    eq(Shop.stock(run)[1].price, require("data.cards")[Shop.stock(run)[1].id].price * 4, "Dusk prices")
+end)
+
+test("events: a swap, a lost ball, a shower, a dog; the bench once per act", function()
+    local run = newDay(13)
+    run.event = { kind = "swap", give = "stag", want = run.jar[4].uid }
+    truthy(Park.answer(run, true)); eq(run.jar[4].species, "stag"); eq(run.event, nil)
+    run.event = { kind = "ball", card = "leaf" }
+    truthy(Park.answer(run, true, run.jar[2].uid)); truthy(run.jar[2].nap); eq(run.deck[#run.deck], "leaf")
+    run.buzz = 2
+    run.event = { kind = "shower" }
+    truthy(Park.answer(run, true)); eq(run.buzz, 1); truthy(run.wet)
+    local spot = Hunt.spots(run)[2]
+    run.event = { kind = "dog" }
+    Park.answer(run, true); eq(run.visits[spot], 1, "every spot shows a new group")
+    truthy(Park.bench(run, "wake")); eq(run.jar[2].nap, nil)
+    local ok = Park.bench(run, "wake"); truthy(not ok, "once per act")
+    -- the shower's puddles on the next duel's board
+    Duel.start(run, run.kids[1])
+    local enc = Duel.encounter(run)
+    local b = ParkData.boards[Duel.boardId(run)]
+    if b.wet then
+        local p = b.wet[1]
+        eq(enc.layout[b.h - p.y + 1]:sub(p.x, p.x), "~")
+    end
+end)
+
+test("house rules: no Lures, hands off her ants, nobody hides from the Nerd, the Rich Kid buys more, the Champion plays for keeps", function()
+    local s = arena({ kid = { { species = "ant", x = 1, y = 1, timer = 9, uid = 1 } }, rival = { { species = "ant", x = 4, y = 4, timer = 9 } }, hand = { "crumb", "flick" },
+        layout = { "......", "......", "......", "......", "......", "g....." } })
+    s.house = "nolures"
+    truthy(not Kid.playable(s, "crumb")); truthy(Kid.playable(s, "flick"))
+    s.house = "noflick"
+    for _, it in ipairs(Kid.options(s, "flick", {}).items) do truthy(it.id ~= find(s, "ant", "rival").id, "not her ants") end
+    truthy(Q.isHidden(s, find(s, "ant", "kid")))
+    s.house = "nohide"
+    truthy(not Q.isHidden(s, find(s, "ant", "kid")), "she has read about your bugs")
+    local run = newDay(14)
+    run.leader = "rich"; run.stacks.rich = 30
+    Duel.start(run, run.kids[1]); run.stacks[run.kids[1]] = 1; settle(run, "kid"); Duel.leave(run)
+    Duel.start(run, "rich")
+    local n = #run.duel.roster
+    run.marbles = 40
+    settle(run, "rival")
+    eq(#run.duel.roster, n + 1); eq(run.duel.roster[n + 1].species, "hercules")
+    run = newDay(15)
+    run.leader = "champ"
+    Duel.start(run, run.kids[1]); run.stacks[run.kids[1]] = 1; settle(run, "kid"); Duel.leave(run)
+    run.stacks.champ = 20
+    Duel.start(run, "champ")
+    run.marbles = 12
+    local enc = Duel.encounter(run)
+    eq(enc.house, "keeps"); eq(enc.stake, 12); eq(enc.keeps.kid, 0); eq(enc.keeps.rival, 8); eq(enc.keeps.endOnBroke, nil)
+end)
+
+test("pocket items in fights: Lucky Marble, Lunchbox, Sneakers, Wristwatch; the Sticker Album pays when you break a rival", function()
+    local run = newDay(16)
+    run.items = { "lucky", "lunchbox", "sneakers", "watch" }
+    Duel.start(run, run.kids[1])
+    local s = Fight.new(Duel.encounter(run), { jar = Run.available(run), deck = run.deck, seed = 1, items = run.items })
+    eq(s.sunLimit, 40 + 10)
+    Fight.autoDeploy(s); Kid.start(s)
+    eq(#s.hand, 6, "one more card")
+    eq(Kid.cost(s, "crumb"), 0, "the first Lure is free"); eq(Kid.releaseCost("stag", s), 2)
+    run = newDay(17)
+    run.items = { "album" }
+    Duel.start(run, run.kids[1])
+    run.marbles, run.stacks[run.kids[1]] = 10, 3
+    settle(run, "kid")
+    eq(run.marbles, 15, "13 + 2 for the album")
 end)
 
 print("Save files")
@@ -396,20 +763,20 @@ end
 
 -- The next fight of a run as the fight scene builds it, after the shuffle and the first draw.
 local function deal(run)
-    local s = Fight.new(require("sim.run").encounter(run), { jar = run.jar, deck = run.deck, seed = require("sim.run").fightSeed(run) })
+    local s = Fight.new(Duel.encounter(run), { jar = Run.available(run), deck = run.deck, seed = Run.fightSeed(run), items = run.items })
     Fight.autoDeploy(s)
     truthy(Kid.start(s), "the fight starts")
     return table.concat(s.hand, ",") .. " | " .. table.concat(s.deck, ",")
 end
 
-test("a saved run loads back exactly, so its seed deals the same fights", function()
-    local Run, Shop, Save = require("sim.run"), require("sim.shop"), require("sim.save")
-    local run = Run.new(123456789)
+test("a saved run loads back exactly, in the middle of a duel, so its seed deals the same fights", function()
+    local run = newDay(123456789)
     run.slot = 2
-    local s = sandbox(); s.winner = "kid"
-    Run.finish(run, s)
-    truthy(Shop.buy(run, itemOf(Shop, run, "leaf")))
-    run.jar[1].tired, run.rewinds = true, 4
+    Hunt.settle(run, { hunt = { spot = Hunt.spots(run)[1] }, caught = { { species = "wasp" } }, met = { wasp = true }, field = { [1] = { total = 3, lost = 3, rescued = 1 } } })
+    Duel.start(run, run.kids[1])
+    settle(run, "rival", { field = { r2 = { total = 1, lost = 1 } } })
+    if run.duel.pick then Duel.pickRule(run, run.duel.pick[1]) end
+    run.rewinds = 4
     local rec = assert(Save.decode(Save.encode({ run = run, savedAt = 1761745816 })))
     eq(rec.savedAt, 1761745816); eq(rec.ended, nil, "still going")
     eq(rec.run.slot, nil, "a file's slot is where it is, not what is in it")
@@ -422,21 +789,23 @@ test("a saved run loads back exactly, so its seed deals the same fights", functi
 end)
 
 test("a finished day is kept as a record of how it ended", function()
-    local Run, Save = require("sim.run"), require("sim.save")
     for _, won in ipairs({ true, false }) do
-        local rec = assert(Save.decode(Save.encode({ run = Run.new(9), ended = { won = won } })))
-        eq(rec.ended.won, won)
+        local run = Run.new(9)
+        run.phase, run.result = "over", { won = won, why = won and "sunset" or "broke" }
+        local rec = assert(Save.decode(Save.encode({ run = run, ended = { won = won } })))
+        eq(rec.ended.won, won); eq(rec.run.result.won, won)
     end
 end)
 
 test("damaged or hand-edited save files are reported, never trusted", function()
-    local Run, Save = require("sim.run"), require("sim.save")
     local json = require("engine.utils.json")
-    for _, text in ipairs({ "", "hello", "42", "[1, 2, 3]", '{"version": 1, "run": ', '{"version": 1}' }) do
+    for _, text in ipairs({ "", "hello", "42", "[1, 2, 3]", '{"version": 2, "run": ', '{"version": 2}' }) do
         local rec, why = Save.decode(text)
         eq(rec, nil, "decoded " .. text); truthy(type(why) == "string", "says why")
     end
-    local good = Save.encode({ run = Run.new(5), savedAt = 1 })
+    local run = newDay(5)
+    Duel.start(run, run.kids[1])
+    local good = Save.encode({ run = run, savedAt = 1 })
     truthy(Save.decode(good), "the untouched file is fine")
     local function edited(change)
         local data = json.decode(good)
@@ -444,19 +813,25 @@ test("damaged or hand-edited save files are reported, never trusted", function()
         return Save.decode(json.encode(data))
     end
     local edits = {
-        ["another version"] = function(d) d.version = 99 end,
+        ["the old demo's format"] = function(d) d.version = 1 end,
         ["no run"] = function(d) d.run = "nope" end,
         ["an unknown card"] = function(d, r) r.deck[1] = "laser" end,
         ["an empty deck"] = function(d, r) r.deck = {} end,
         ["an unknown bug"] = function(d, r) r.jar[1].species = "dragon" end,
-        ["a Jar fuller than its slots"] = function(d, r) r.jarSlots = 2 end,
         ["two bugs with one uid"] = function(d, r) r.jar[2].uid = r.jar[1].uid end,
         ["a uid from the future"] = function(d, r) r.jar[1].uid = r.nextUid end,
         ["negative marbles"] = function(d, r) r.marbles = -1 end,
         ["half a marble"] = function(d, r) r.marbles = 2.5 end,
-        ["a fight that does not exist"] = function(d, r) r.node = #Run.NODES + 1 end,
+        ["an act that does not exist"] = function(d, r) r.act = 4 end,
+        ["a strange phase"] = function(d, r) r.phase = "nap time" end,
         ["a seed out of range"] = function(d, r) r.seed = Run.SEED_MAX + 1 end,
         ["a Journal page of no species"] = function(d, r) r.seen.dragon = true end,
+        ["an unknown pocket item"] = function(d, r) r.items = { "laser" } end,
+        ["an unknown zone"] = function(d, r) r.zone = "moon" end,
+        ["a rival nobody knows"] = function(d, r) r.duel.rival = "batman" end,
+        ["a duel in round 4"] = function(d, r) r.duel.round = 4 end,
+        ["a Buzz off the scale"] = function(d, r) r.buzz = 9 end,
+        ["a duel phase without a duel"] = function(d, r) r.duel = nil end,
         ["a strange ending"] = function(d) d.ended = { won = "yes" } end,
         ["a strange date"] = function(d) d.savedAt = "yesterday" end,
     }
@@ -467,8 +842,7 @@ test("damaged or hand-edited save files are reported, never trusted", function()
 end)
 
 test("seeds stay in the range the generator handles exactly", function()
-    local Run = require("sim.run")
-    truthy(Run.fightSeed({ seed = Run.SEED_MAX, node = #Run.NODES }) * 48271 < 2 ^ 53, "the generator's first step is exact in doubles")
+    truthy(Run.fightSeed({ seed = Run.SEED_MAX, fights = 200 }) * 48271 < 2 ^ 53, "the generator's first step is exact in doubles")
     eq(Run.fightSeed(Run.new(7)), 7 * 131 + 1, "the old fixed seed still deals the old first fight")
 end)
 

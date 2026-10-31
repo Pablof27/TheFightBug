@@ -1,5 +1,5 @@
 -- Text drawing. The hand-lettered display font (uppercase, outline baked in) is for titles, numbers and names;
--- LÖVE's built-in font (rasterised at 2x so it stays crisp when the window is scaled) is for the small print.
+-- Playpen Sans (rasterised at 2x so it stays crisp when the window is scaled) is for the small print.
 
 local Assets = require("client.assets")
 
@@ -8,11 +8,13 @@ local Text = {}
 local INK = { 0.17, 0.07, 0.22 }
 Text.INK = INK
 
+local BODY_FONT = "resources/Playpen_Sans/static/PlaypenSans-SemiBold.ttf"
+
 local bodyFonts = {}
 local function bodyFont(size)
     local f = bodyFonts[size]
     if not f then
-        f = love.graphics.newFont(size * 2)
+        f = love.graphics.newFont(BODY_FONT, size * 2)
         f:setFilter("linear", "linear")
         bodyFonts[size] = f
     end

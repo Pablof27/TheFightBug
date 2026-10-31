@@ -1,5 +1,7 @@
 -- The kid's actions (GDD §5.5): play a card, wait, release a bug from the Jar. Every one of them costs time.
--- Before the first action there is a deploy phase: up to 3 Jar bugs go onto the home rows for free.
+-- Before the first action there is a deploy phase: up to 3 Jar bugs go onto the home rows for free. On a Bug Hunt the deploy
+-- phase also lays the jar (the trap), the bugs you deploy are your whole hunting party (nobody is released later), and
+-- you can close the lid at any time.
 
 local Grid = require("sim.grid")
 local State = require("sim.state")
@@ -7,6 +9,7 @@ local R = require("sim.resolver")
 local Clock = require("sim.clock")
 local Deck = require("sim.deck")
 local Rules = require("sim.rules")
+local Rival = require("sim.rival")
 local Fx = require("sim.cardfx")
 local U = require("sim.util")
 local Cards = require("data.cards")
@@ -19,6 +22,19 @@ Kid.MAX_DEPLOY = 3
 Kid.options = Fx.options
 Kid.area = Fx.area
 
+--- The time a card takes: the Lunchbox makes your first Lure of the fight free.
+function Kid.cost(s, id)
+    local def = Cards[id]
+    if def.type == "lure" and s.items and s.items.lunchbox and not s.lunchUsed then return 0 end
+    return def.cost
+end
+
+--- Can this card be played at all right now? (A house rule can forbid it: "No Lures in my sandbox!")
+function Kid.playable(s, id)
+    local o = Fx.options(s, id, {})
+    return o ~= nil and #o.items > 0
+end
+
 --- Play the card at hand[handIndex] with a complete selection. o.noClock applies the effect only (previews).
 function Kid.play(s, handIndex, sel, o)
     o = o or {}
@@ -27,13 +43,15 @@ function Kid.play(s, handIndex, sel, o)
     if not id then return false, "no such card" end
     if not Fx.validate(s, id, sel) then return false, "bad selection" end
     local def = Cards[id]
+    local cost = Kid.cost(s, id)
+    if def.type == "lure" and s.items and s.items.lunchbox then s.lunchUsed = true end
     table.remove(s.hand, handIndex)
     if def.exhaust then s.exhaust[#s.exhaust + 1] = id else s.discard[#s.discard + 1] = id end
     s.stats.cards = s.stats.cards + 1
-    State.emit(s, "card", { card = id, cost = def.cost, sel = sel })
+    State.emit(s, "card", { card = id, cost = cost, sel = sel })
     Fx.apply(s, id, sel)
     Rules.check(s)
-    if def.cost > 0 and not s.winner and not o.noClock then Clock.advance(s, def.cost) end
+    if cost > 0 and not s.winner and not o.noClock then Clock.advance(s, cost) end
     return true
 end
 
@@ -45,18 +63,50 @@ function Kid.wait(s)
     return true
 end
 
-function Kid.releaseCost(speciesId) return Bugs[speciesId].weight end
+--- Close the lid (Bug Hunts): the hunt ends now and you keep what's in the jar. It takes no time.
+function Kid.closeLid(s)
+    if s.winner or s.phase ~= "fight" or not (s.rule and s.rule.id == "jar") then return false end
+    State.emit(s, "lid", {})
+    Rules.endHunt(s, "lid")
+    return true
+end
+
+--- Light 1, Medium 2, Heavy 3 ticks. With Sneakers, 1 less (never less than 1).
+function Kid.releaseCost(speciesId, s)
+    local w = Bugs[speciesId].weight
+    if s and s.items and s.items.sneakers then return math.max(1, w - 1) end
+    return w
+end
 
 function Kid.homeFree(s, x, y)
     local c = Grid.cell(s, x, y)
-    return c ~= nil and not c.void and Grid.isHomeRow(s, "kid", y) and not c.block
+    return c ~= nil and not c.void and Grid.isHomeRow(s, "kid", y) and not c.block and not c.trap
         and not (c.puddle and c.cover ~= "leaf") and not State.at(s, x, y)
+end
+
+--- Where the jar can be laid on a hunt: a free tile of your home rows with nothing on it.
+function Kid.trapFree(s, x, y)
+    local c = Grid.cell(s, x, y)
+    return Kid.homeFree(s, x, y) and not c.food and not c.cover
+end
+
+--- Lay the jar on its side on (x, y) (deploy phase of a Bug Hunt). It stays there for the whole hunt.
+function Kid.placeTrap(s, x, y)
+    if s.phase ~= "deploy" or not (s.rule and s.rule.id == "jar") then return false, "not now" end
+    if not Kid.trapFree(s, x, y) then return false, "tile" end
+    if s.trapAt then Grid.cell(s, s.trapAt.x, s.trapAt.y).trap = nil end
+    Grid.cell(s, x, y).trap = true
+    s.trapAt = { x = x, y = y }
+    State.emit(s, "trap", { x = x, y = y })
+    return true
 end
 
 local function spawnFromJar(s, entry, x, y)
     local sp = Bugs[entry.species]
     local spots = { { x = x, y = y } }
-    local n = sp.colony or 1
+    -- a merged ("bigger and better") entry: one more ant in a colony, one more heart for anybody else
+    local n = sp.colony and (sp.colony + (entry.big and 1 or 0)) or 1
+    local bonus = (entry.big and not sp.colony) and 1 or 0
     if n > 1 then
         local cands = {}
         for _, t in ipairs(require("sim.query").homeTiles(s, "kid")) do
@@ -72,8 +122,7 @@ local function spawnFromJar(s, entry, x, y)
     end
     local made = {}
     for _, p in ipairs(spots) do
-        local hp = entry.tired and math.max(1, math.ceil(sp.hp / 2)) or nil
-        local b = State.spawnBug(s, entry.species, "kid", p.x, p.y, { jarUid = entry.uid, hp = hp })
+        local b = State.spawnBug(s, entry.species, "kid", p.x, p.y, { jarUid = entry.uid, bonus = bonus })
         State.emit(s, "spawn", { id = b.id, species = entry.species, side = "kid", x = p.x, y = p.y })
         R.arrive(s, b)
         made[#made + 1] = b
@@ -82,9 +131,11 @@ local function spawnFromJar(s, entry, x, y)
     return made
 end
 
---- Release a bug from the Jar onto an empty home tile: Light 1, Medium 2, Heavy 3 ticks.
+--- Release a bug from the Jar onto an empty home tile: Light 1, Medium 2, Heavy 3 ticks. Not on a hunt: the bugs that
+--- stayed home are safe at home.
 function Kid.release(s, jarIndex, x, y)
     if s.winner or s.phase ~= "fight" then return false, "not now" end
+    if s.hunt then return false, "hunt" end
     local entry = s.jar[jarIndex]
     if not entry then return false, "no such bug" end
     if not Kid.homeFree(s, x, y) then return false, "tile" end
@@ -92,7 +143,7 @@ function Kid.release(s, jarIndex, x, y)
     State.emit(s, "release", { species = entry.species, x = x, y = y })
     spawnFromJar(s, entry, x, y)
     Rules.check(s)
-    if not s.winner then Clock.advance(s, Kid.releaseCost(entry.species)) end
+    if not s.winner then Clock.advance(s, Kid.releaseCost(entry.species, s)) end
     return true
 end
 
@@ -133,14 +184,18 @@ function Kid.undeploy(s, uid)
     return true
 end
 
---- Ends the deploy phase: shuffle the deck and draw the opening hand.
+--- Ends the deploy phase: shuffle the deck and draw the opening hand (one more with the Lucky Marble). On a hunt, the
+--- bugs that weren't picked stay home.
 function Kid.start(s)
     if s.phase ~= "deploy" then return false end
+    if s.hunt and not s.trapAt then return false, "jar" end
     s.phase = "fight"
+    if s.hunt then s.jar = {} end
     if not s.scriptedHand then
         U.shuffle(s, s.deck)
-        Deck.draw(s, Deck.START_HAND)
+        Deck.draw(s, Deck.START_HAND + ((s.items and s.items.lucky) and 1 or 0))
     end
+    Rival.begin(s)
     State.emit(s, "start", {})
     return true
 end

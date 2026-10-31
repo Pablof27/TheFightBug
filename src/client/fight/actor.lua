@@ -37,6 +37,7 @@ function Actor:sync(bug)
     self.ready, self.curled, self.flipped, self.soaked = bug.ready, bug.curled, bug.flipped, bug.soaked
     self.carrying = bug.carrying ~= nil
     self.hiddenFlag = bug.hiddenFlag
+    self.loose, self.prize = bug.loose, bug.prize
 end
 
 function Actor:place(x, y)
@@ -143,9 +144,22 @@ function Actor:drawSprite(hidden)
         sx = -sx
     end
     local a = self.alpha * (hidden and 0.5 or 1)
+    if self.loose then
+        -- knocked out on a hunt: dizzy, wobbling, looking for the way out
+        a = a * 0.85
+        rot = rot + math.sin(self.animT * 14) * 0.12
+    end
     local frame = self:frameName()
     love.graphics.setColor(1, 1, 1, a)
     atlas:draw(frame, fx, y, rot, sx, sy)
+    if self.loose and not self.gone then
+        love.graphics.setColor(1, 1, 1, a)
+        Assets.ui:draw("fx_sweat", fx + 22 * u, y - self:height() * T * 0.9, 0, 0.2 * u)
+    end
+    if self.prize and not self.gone then
+        love.graphics.setColor(1, 1, 1, self.alpha)
+        Assets.ui:draw("fx_star", fx - 26 * u, fy - lift - self:height() * T * 0.9 + math.sin(self.animT * 4) * 3 * u, 0, 0.2 * u)
+    end
     if self.flash > 0 then
         love.graphics.setBlendMode("add", "alphamultiply")
         local c = self.flashColor

@@ -11,6 +11,8 @@ local Fx = require("client.fx")
 local UI = require("client.ui")
 local Saves = require("client.saves")
 local Run = require("sim.run")
+local Flow = require("client.flow")
+local PD = require("data.park")
 local Rivals = require("data.rivals")
 local Bugs = require("data.bugs")
 
@@ -108,15 +110,12 @@ function Slots:start(i, seed)
     Audio.play("ui_click")
     Audio.play("win", 0.4)
     local run = Saves.create(i, seed)
-    self.app.run = run
-    self.app.switch("map", { run = run, intro = true })
+    Flow.go(self.app, run)
 end
 
 function Slots:continue(i)
     Audio.play("ui_click")
-    local run = self.slots[i].run
-    self.app.run = run
-    self.app.switch("map", { run = run })
+    Flow.go(self.app, self.slots[i].run)
 end
 
 function Slots:askErase(i)
@@ -165,16 +164,17 @@ end
 -- ───────────────────────── drawing ─────────────────────────
 local function drawJar(run, x, y, w, seed)
     Text.display("YOUR JAR", x, y, 13, C.tealDark, "left")
-    local step = math.min(60, w / run.jarSlots)
+    local n = math.max(run.jarSlots, #run.jar)
+    local step = math.min(60, w / n)
     local rad = step * 0.42
-    for j = 1, run.jarSlots do
+    for j = 1, n do
         local e = run.jar[j]
         local cx, cy = x + step * (j - 0.5), y + 46
         Paper.disc(cx, cy, rad, e and C.cream or { 1, 1, 1, 0.4 }, { seed = seed + j, shadow = e ~= nil, line = e and 3 or 2 })
         if e then
-            love.graphics.setColor(1, 1, 1, 1)
+            love.graphics.setColor(1, 1, 1, e.nap and 0.55 or 1)
             Assets.drawPortrait(e.species, cx, cy, rad * 1.8)
-            if e.tired then Assets.ui:draw("fx_zzz", cx + rad * 0.8, cy - rad * 0.8, 0, 0.13) end
+            if e.nap then love.graphics.setColor(1, 1, 1, 1); Assets.ui:draw("fx_zzz", cx + rad * 0.8, cy - rad * 0.8, 0, 0.13) end
         end
     end
 end
@@ -186,28 +186,47 @@ local function drawRival(rv, mood, x, y, seed)
     Assets.drawKid(rv.portrait, mood, x, y + 4, 126)
 end
 
+local PHASE_TITLE = { prologue = "SATURDAY!", zone = "WHERE TO?", free = "FREE TIME", duel = "A DUEL", reward = "A PRIZE!" }
+
+--- Where a day in progress stands, in a line.
+local function whereLine(run)
+    if run.phase == "prologue" then return "The day hasn't started yet." end
+    if run.phase == "zone" then return "Picking a corner of the park." end
+    if run.phase == "reward" then return "The Gang leader is beaten: pick a pocket item." end
+    local zone = run.zone and PD.zones[run.zone].name or "The park"
+    if run.phase == "duel" and run.duel then
+        return zone .. ": against " .. Rivals[run.duel.rival].name .. ", round " .. run.duel.round .. "."
+    end
+    if run.window == 2 then return zone .. ". Next: the Gang leader, " .. Rivals[run.leader].name .. "." end
+    return zone .. ". Next: a duel against a kid."
+end
+
 --- A run in progress or a finished day: where it stands, the marbles, the Jar, the Bug Journal.
 function Slots:drawDay(s, r)
     local run = s.run
-    local enc = Run.encounter(run)
-    local rv = Rivals[enc.rival]
     local x, w = r.x + 28, r.w - 56
+    local face = run.phase == "duel" and run.duel and run.duel.rival or run.leader
     if s.kind == "run" then
-        Text.display("FIGHT " .. run.node .. " OF " .. #Run.NODES .. (enc.boss and " - THE BOSS" or ""), x, r.y + 72, 15, C.tealDark, "left", 250)
-        Text.display(enc.name, x, r.y + 98, 30, INK, "left", 250)
-        Text.body("against " .. rv.name .. ", who bets " .. rv.bet, x, r.y + 140, 14, SOFT, "left", 250)
-        drawRival(rv, "neutral", r.x + r.w - 88, r.y + 112, 150 + s.slot * 3)
+        local act = Run.actDef(run)
+        Text.display(act.name .. "  ·  PART " .. run.act .. " OF " .. Run.ACTS, x, r.y + 72, 15, C.tealDark, "left", 250)
+        Text.display(PHASE_TITLE[run.phase] or "", x, r.y + 96, 30, INK, "left", 250)
+        Text.body(whereLine(run), x, r.y + 138, 13.5, SOFT, "left", 250)
+        if face then drawRival(Rivals[face], "neutral", r.x + r.w - 88, r.y + 112, 150 + s.slot * 3)
+        else
+            love.graphics.setColor(1, 1, 1, 1)
+            Assets.ui:drawFit("icon_jar", r.x + r.w - 140, r.y + 60, 104, 104)
+        end
     else
         local won = s.ended.won
         Text.display("THE DAY IS OVER", x, r.y + 72, 15, C.tealDark, "left", 250)
         Text.display(won and "SUNSET!" or "HOME EARLY", x, r.y + 96, 34, won and C.magenta or C.purple, "left", 250)
-        local why = won and ("You beat all " .. #Run.NODES .. " rival kids.") or ("Couldn't cover " .. rv.name .. "'s bet of " .. rv.bet .. ".")
+        local why = won and "You got past all three Gang leaders." or ("Out of marbles in the " .. Run.actDef(run).name:lower() .. ".")
         Text.body(why, x, r.y + 140, 14, SOFT, "left", 250)
-        drawRival(rv, won and "sad" or "happy", r.x + r.w - 88, r.y + 112, 150 + s.slot * 3)
+        if face then drawRival(Rivals[face], won and "sad" or "happy", r.x + r.w - 88, r.y + 112, 150 + s.slot * 3) end
     end
     marble(x + 24, r.y + 210, 46)
     Text.display(plural(run.marbles, "MARBLE"), x + 58, r.y + 193, 28, INK, "left", w - 58)
-    Text.body("Won " .. run.wins .. "   ·   Lost " .. run.losses .. "   ·   Deck: " .. #run.deck .. " cards", x, r.y + 244, 14, SOFT, "left", w)
+    Text.body("Kids broke " .. (run.broke or 0) .. "   ·   Hunts " .. (run.hunts or 0) .. "   ·   Caught " .. (run.caught or 0) .. "   ·   Deck " .. #run.deck, x, r.y + 244, 13.5, SOFT, "left", w)
     drawJar(run, x, r.y + 282, w, 160 + s.slot * 10)
     Text.body("Bug Journal: " .. count(run.seen) .. " of " .. SPECIES .. " species", x, r.y + 382, 13.5, INK, "left", w)
     local line = when(s.savedAt) and ("Saved " .. when(s.savedAt)) or ""
@@ -231,7 +250,7 @@ function Slots:drawCard(i)
         love.graphics.setColor(1, 1, 1, 0.5)
         Assets.ui:drawFit("icon_jar", r.x + r.w / 2 - 80, r.y + 80, 160, 160)
         Text.display("EMPTY", r.x + r.w / 2, r.y + 268, 40, INK, "center")
-        Text.body("A new Saturday at the park: " .. Run.START_MARBLES .. " marbles, a jar of bugs and " .. #Run.NODES .. " rival kids to beat.",
+        Text.body("A new Saturday at the park: " .. PD.START_MARBLES .. " marbles, a jar of bugs and " .. Run.ACTS .. " Gang leaders to beat before sunset.",
             r.x + 48, r.y + 330, 15, SOFT, "center", r.w - 96)
     elseif s.kind == "damaged" then
         love.graphics.setColor(1, 1, 1, 1)
@@ -255,7 +274,7 @@ function Slots:draw()
     love.graphics.setColor(0.17, 0.07, 0.22, 0.5)
     love.graphics.rectangle("fill", 0, 0, 1600, 900)
     Text.display("PICK A SAVE SLOT", 800, 40, 52, C.yellow, "center")
-    Text.body("Your day at the park is saved after every fight and every purchase at the Swap Shop.", 800, 110, 16, { 1, 1, 1 }, "center", nil, 2)
+    Text.body("Your day at the park is saved after every fight and at every calm moment in between.", 800, 110, 16, { 1, 1, 1 }, "center", nil, 2)
     if self.app.debug then Text.body("DEBUG: new games ask for a seed", 1584, 14, 13, C.yellow, "right", nil, 2) end
     for i = 1, Saves.COUNT do self:drawCard(i) end
     UI.button(BACK, "BACK", { hover = not self.dialog and self.hover == "back", size = 30, seed = 170, fill = C.purpleLight })

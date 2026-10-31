@@ -1,4 +1,5 @@
--- The end of the demo: sunset (you release your bugs and Mom calls) or a lost run (you can't cover the next bet).
+-- The end of the day: sunset (you got past all three Gang leaders: you release your bugs and Mom calls) or home early
+-- (out of marbles, and Big Sister has already helped once).
 
 local Assets = require("client.assets")
 local Paper = require("client.paper")
@@ -8,7 +9,6 @@ local Fx = require("client.fx")
 local UI = require("client.ui")
 local Run = require("sim.run")
 local Bugs = require("data.bugs")
-local Rivals = require("data.rivals")
 
 local C = Paper.C
 local Ending = {}
@@ -21,10 +21,12 @@ local CAN_QUIT = love.system.getOS() ~= "Web"
 
 function Ending.new(app, params)
     local self = setmetatable({ app = app, time = 0, hover = nil }, Ending)
-    self.run, self.won, self.sum = params.run, params.won, params.sum
+    self.run = params.run
+    self.won = params.won
+    if self.won == nil then self.won = self.run.result and self.run.result.won or false end
     self.walkers = {}
     for i, e in ipairs(self.run.jar) do
-        self.walkers[i] = { sp = e.species, x = 60 + (i - 1) * 118, phase = i * 1.3, delay = 1.5 + i * 0.5, tired = e.tired }
+        self.walkers[i] = { sp = e.species, x = 60 + (i - 1) * 118, phase = i * 1.3, delay = 1.5 + i * 0.5 }
     end
     return self
 end
@@ -49,13 +51,14 @@ function Ending:draw()
     Paper.panel(120, 40, 840, 620, { fill = self.won and { 1, 0.95, 0.7 } or { 0.9, 0.85, 1 }, seed = 95, r = 28, rot = -0.004, tape = true })
     if self.won then
         Text.display("SUNSET AT THE PARK", 540, 70, 46, C.magenta, "center")
-        Text.body("You beat all three rivals. Mom calls from across the lawn: dinner time!", 170, 150, 19, Text.INK, "left", 740)
-        Text.body("You tip the jar over and let your bugs walk back into the grass. They'll still be here tomorrow.", 170, 205, 17, Text.INK, "left", 740)
+        local a = "You got past all three Gang leaders. Mom calls from across the lawn: dinner time!"
+        Text.body(a, 170, 140, 19, Text.INK, "left", 740)
+        Text.body("You tip the jar over and let your bugs walk back into the grass. They'll still be here tomorrow.", 170, 140 + Text.bodyHeight(a, 19, 740) + 12, 17, Text.INK, "left", 740)
     else
-        Text.display("THE PARK CAN WAIT", 540, 70, 46, C.purple, "center")
-        local rv = Rivals[Run.encounter(run).rival]
-        Text.body("You have " .. run.marbles .. (run.marbles == 1 and " marble" or " marbles") .. " left, and " .. rv.name .. " won't play for less than " .. rv.bet .. ". Nobody plays with a kid who can't pay up, so everybody goes home early.", 170, 140, 18, Text.INK, "left", 740)
-        Text.body("Try again: a new idea, a different card, a smarter buy at the Swap Shop. Nothing in a fight is random.", 170, 224, 16, Text.INK, "left", 740)
+        Text.display("HOME EARLY", 540, 70, 46, C.purple, "center")
+        local a = "Out of marbles in the " .. Run.actDef(run).name:lower() .. ". Nobody plays with a kid with empty pockets, and Big Sister has already helped once today. You walk home with your jar."
+        Text.body(a, 170, 136, 18, Text.INK, "left", 740)
+        Text.body("Try again: another corner of the park, other hunts, a smarter buy at the van. Nothing in a fight is random.", 170, 136 + Text.bodyHeight(a, 18, 740) + 12, 16, Text.INK, "left", 740)
     end
     -- numbers
     local sx, sy = 170, 290
@@ -63,9 +66,10 @@ function Ending:draw()
         Text.display(value, x, y, 38, col or Text.INK, "left")
         Text.display(label, x, y + 52, 12, { 0.4, 0.25, 0.5 }, "left")
     end
-    stat("FIGHTS WON", tostring(run.wins) .. "/3", sx, sy, C.tealDark)
-    stat("MARBLES", tostring(run.marbles), sx + 240, sy, C.orange)
-    stat("REWINDS USED", tostring(run.rewinds or 0), sx + 480, sy, C.purple)
+    stat("KIDS BROKE", tostring(run.broke or 0), sx, sy, C.tealDark)
+    stat("BUGS CAUGHT", tostring(run.caught or 0), sx + 190, sy, C.green)
+    stat("MARBLES", tostring(run.marbles), sx + 380, sy, C.orange)
+    stat("REWINDS", tostring(run.rewinds or 0), sx + 570, sy, C.purple)
     -- journal
     Text.display("BUG JOURNAL", 170, 400, 16, C.tealDark, "left")
     local seen = {}
@@ -78,7 +82,7 @@ function Ending:draw()
         Assets.drawPortrait(id, x, 482, 62)
     end
     Text.body(#seen .. " of 9 species met in this demo. The full game has 30+ to meet, catch and learn about.", 170, 545, 14, { 0.4, 0.25, 0.5 }, "left", 740)
-    Text.body("Next in the full game: a whole park map, benches, wild events, bosses with real kid-sized rules, and the Bug Journal as a collection.", 170, 585, 14, Text.INK, "left", 740)
+    Text.body("Next in the full game: more corners of the park and more games, weather, Big Kids, bugs that come out at dusk, and new things to unlock between days.", 170, 585, 14, Text.INK, "left", 740)
 
     -- walkers go home
     for _, w in ipairs(self.walkers) do

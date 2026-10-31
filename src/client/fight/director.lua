@@ -218,7 +218,7 @@ function H.push(d, ev)
     local a = actorOf(d, ev.id)
     if not a then return 0 end
     local dur = ev.cause == "roll" and 0.1 or 0.2
-    if ev.cause == "flick" or ev.cause == "shove" or ev.cause == "blow" then a:setAnim("hurt", 0.25) end
+    if ev.cause == "flick" or ev.cause == "shove" or ev.cause == "blow" or ev.cause == "tantrum" or ev.cause == "shooter" or ev.cause == "dog" then a:setAnim("hurt", 0.25) end
     a.hopT = 0
     a.hopH = ev.cause == "roll" and 0 or G.T * 0.22
     Tween.to(a, { x = ev.x, y = ev.y }, dur, "outQuad")
@@ -525,6 +525,11 @@ function H.wait(d, ev) return 0 end
 function H.release(d, ev) return 0 end
 function H.start(d, ev) return 0 end
 
+local RIVAL_SHOUT = {
+    farm = "OPEN THE FARM!", buy = "BUY ANOTHER!", tantrum = "TANTRUM!", notes = "FIELD NOTES!", tagteam = "TAG TEAM!",
+    shooter = "SHOOTER!", shower = "RAIN!", bird = "A SHADOW!", dog = "WOOF WOOF!", mower = "VROOOOM!",
+}
+
 function H.rival_act(d, ev)
     local s = d.scene
     s.rivalAnim = 1
@@ -533,11 +538,147 @@ function H.rival_act(d, ev)
         s:stompAt(ev.x, ev.y)
         return 0.75
     end
+    local kid = s:rivalDef() ~= nil
+    Fx.text(RIVAL_SHOUT[ev.kind] or ((s.state.rival.name or "") .. "!"), 226, 300, kid and C.magenta or C.tealDark, 30)
+    local a = ev.id and actorOf(d, ev.id)
+    if ev.kind == "tantrum" then
+        Audio.play("bump")
+        Fx.shake(8)
+        if a then local x, y = head(a); Fx.stars(x, y, 4) end
+        return 0.4
+    elseif ev.kind == "notes" then
+        Audio.play("tap")
+        if a then local x, y = head(a); Fx.sprite("icon_eye", x, y - 10, { vy = -30, life = 0.9, s0 = 0.22, s1 = 0.28 }) end
+        return 0.4
+    elseif ev.kind == "tagteam" then
+        Audio.play("ready")
+        for _, id in ipairs(ev.ids or {}) do
+            local o = actorOf(d, id)
+            if o then local x, y = head(o); Fx.sparkle(x, y, 5, 22) end
+        end
+        return 0.4
+    elseif ev.kind == "shooter" then
+        Audio.play("roll")
+        local _, cy = G.center(1, ev.y)
+        s:rollMarble(cy)
+        return 0.5
+    elseif ev.kind == "shower" then
+        Audio.play("splash")
+        for _ = 1, 14 do Fx.drops(G.x + love.math.random() * G.size, G.y + love.math.random() * G.size, 3) end
+        return 0.5
+    elseif ev.kind == "bird" then
+        Audio.play("shadow")
+        s:birdShadow()
+        return 0.65
+    elseif ev.kind == "dog" then
+        Audio.play("bump")
+        Fx.shake(10)
+        local _, cy = G.center(1, ev.y)
+        s:dogRun(cy)
+        return 0.6
+    elseif ev.kind == "mower" then
+        Audio.play("stomp")
+        Fx.shake(14)
+        return 0.6
+    end
     Audio.play("alarm", 0.5, 0.7)
-    local sig = require("data.rivals")[s.state.rival.id].sig
-    Fx.text(sig.name .. "!", 210, 300, C.magenta, 30)
     return 0.45
 end
+
+-- ───────────────────────── Bug Hunts and the Showdown ─────────────────────────
+
+--- A wild bug fell into the jar.
+function H.catch(d, ev)
+    local a = actorOf(d, ev.id)
+    local list = d.scene.disp.caught
+    list[#list + 1] = { species = ev.species, prize = ev.prize }
+    local trap = d.scene.state.trapAt
+    local x, y = G.foot(trap and trap.x or ev.x, trap and trap.y or ev.y)
+    if a then
+        a.gone = true
+        local tx, ty = trap and trap.x or a.x, trap and trap.y or a.y
+        Tween.to(a, { x = tx, y = ty, sx = 0.2, sy = 0.2, alpha = 0 }, 0.4, "inCubic", function() a.dead = true end)
+    end
+    Audio.play(ev.prize and "win" or "deliver", ev.prize and 0.7 or 1)
+    Fx.sparkle(x, y - 30, ev.prize and 14 or 8, 40)
+    local label = ev.how == "pooter" and "SLURP!" or ev.how == "net" and "NETTED!" or ev.how == "sweep" and "SWEPT UP!" or "CAUGHT!"
+    Fx.text(ev.prize and "THE PRIZE!" or label, x, y - G.T * 0.9, ev.prize and C.yellow or C.teal, ev.prize and 34 or 28)
+    return 0.45
+end
+
+--- One of yours was knocked out on a hunt: it runs loose.
+function H.loose(d, ev)
+    local a = actorOf(d, ev.id)
+    if not a then return 0 end
+    a.loose, a.hp = true, 0
+    a.timer = math.max(0, ev.timer or 0)
+    a.ready, a.curled, a.flipped, a.soaked, a.carrying = false, false, false, false, false
+    a.rot, a.spin = 0, 0
+    a:setAnim("hurt", 0.5)
+    Audio.play("scurry")
+    local x, y = head(a)
+    Fx.text("LOOSE!", x, y, C.orange, 26)
+    Fx.sprite("fx_sweat", x + 18, y + 14, { vx = 20, vy = -60, gravity = 160, life = 0.5, s0 = 0.3, s1 = 0.3 })
+    return 0.45
+end
+
+--- A loose bug made it back into the jar.
+function H.rescue(d, ev)
+    local a = actorOf(d, ev.id)
+    Audio.play("pickup")
+    if a then
+        a.gone = true
+        local x, y = head(a)
+        Fx.text("SAFE!", x, y, C.green, 26)
+        Fx.sparkle(x, y + 20, 6, 24)
+        Tween.to(a, { sx = 0.2, sy = 0.2, alpha = 0 }, 0.35, "inCubic", function() a.dead = true end)
+    end
+    return 0.4
+end
+
+--- A loose bug crawled off the board (or was still loose when the hunt ended): gone for good.
+function H.escape(d, ev)
+    local a = actorOf(d, ev.id)
+    Audio.play("scurry")
+    if a then
+        a.gone = true
+        local x, y = head(a)
+        Fx.text("GONE!", x, y, C.magentaDark, 26)
+        a:setAnim("walk", 1)
+        if (ev.dx or 0) ~= 0 or (ev.dy or 0) ~= 0 then
+            Tween.to(a, { x = a.x + ev.dx * 1.4, y = a.y + ev.dy * 1.4 }, 0.6, "inQuad")
+        end
+        Tween.after(0.25, function() Tween.to(a, { alpha = 0 }, 0.35, "linear", function() a.dead = true end) end)
+    end
+    return 0.45
+end
+
+--- Showdown / "for keeps": a hit moved a marble.
+function H.marble(d, ev)
+    local k = d.scene.disp.keeps
+    if k then k.kid, k.rival = ev.kid, ev.rival end
+    local a = actorOf(d, ev.id)
+    local x, y = 800, 450
+    if a then x, y = head(a) end
+    local mine = ev.to == "kid"
+    Fx.sprite("icon_marble", x, y, { vx = mine and -420 or -300, vy = -280, gravity = 520, life = 0.75, s0 = 0.22, s1 = 0.16 })
+    Fx.text(mine and "+1 MARBLE" or "-1 MARBLE", x, y - 24, mine and C.teal or C.magenta, 22)
+    Audio.play("coin", 0.7)
+    return 0.15
+end
+
+function H.lid(d, ev)
+    Audio.play("place")
+    local trap = d.scene.state.trapAt
+    if trap then
+        local x, y = G.foot(trap.x, trap.y)
+        Fx.text("LID ON!", x, y - G.T, C.yellow, 30)
+        Fx.puff(x, y, 4, 0.2)
+    end
+    return 0.35
+end
+
+function H.trap(d, ev) return 0 end
 
 function H.rival_timer(d, ev)
     d.scene.disp.rivalTimer = ev.timer

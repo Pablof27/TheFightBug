@@ -20,7 +20,8 @@ local TYPE_COLOR = { lure = C.orange, terrain = C.green, nudge = C.blue, timing 
 
 local function seedOf(id) local n = 0; for i = 1, #id do n = n + id:byte(i) * i end return n end
 
---- Draws one card centred on (0, 0) in the current transform.
+--- Draws one card centred on (0, 0) in the current transform. o: glow, shadow, cost (what it costs right now, if it
+--- isn't the printed cost), disabled (can't be played right now)
 function HandView.drawCard(id, o)
     o = o or {}
     local def = Cards[id]
@@ -43,14 +44,20 @@ function HandView.drawCard(id, o)
     Text.body(def.text, -w / 2 + 12, -h / 2 + 138, 11.5, Text.INK, "left", w - 24)
     -- cost bubble (inside the corner, so overlapping neighbours never hide it)
     local tc = TYPE_COLOR[def.type] or C.orange
-    Paper.disc(-w / 2 + 21, -h / 2 + 21, 19, C.orange, { seed = 5, shadow = true, line = 3.5 })
+    local cost = o.cost or def.cost
+    Paper.disc(-w / 2 + 21, -h / 2 + 21, 19, cost < def.cost and C.green or C.orange, { seed = 5, shadow = true, line = 3.5 })
     love.graphics.setColor(1, 1, 1, 1)
     local iw, ih = Assets.ui:size("icon_hourglass")
     love.graphics.draw(Assets.ui.image, Assets.ui.quads.icon_hourglass, -w / 2 + 12, -h / 2 + 33, 0, 14 / ih, 14 / ih, iw / 2, ih / 2)
-    Text.display(tostring(def.cost), -w / 2 + 25, -h / 2 + 9, 17, { 1, 1, 1 }, "center")
+    Text.display(tostring(cost), -w / 2 + 25, -h / 2 + 9, 17, { 1, 1, 1 }, "center")
     -- type tag
     Paper.panel(w / 2 - 66, h / 2 - 8, 58, 18, { fill = tc, seed = 7, r = 8, line = 2.5, shadow = false })
     Text.display(def.type, w / 2 - 37, h / 2 - 3, 9, { 1, 1, 1 }, "center")
+    if o.disabled then
+        love.graphics.setColor(C.ink[1], C.ink[2], C.ink[3], 0.5)
+        love.graphics.rectangle("fill", -w / 2, -h / 2, w, h, 14, 14)
+        Text.display("NOT NOW", 0, -10, 20, { 1, 1, 1 }, "center")
+    end
 end
 
 function HandView.new()
@@ -115,7 +122,8 @@ function HandView:update(dt, hoverIndex, armedIndex)
     end
 end
 
-function HandView:draw(hoverIndex, armedIndex)
+--- info(id) -> { cost, disabled } for the cards in the hand (optional).
+function HandView:draw(hoverIndex, armedIndex, info)
     for _, f in ipairs(self.flying) do
         love.graphics.push()
         love.graphics.translate(f.x, f.y)
@@ -125,6 +133,10 @@ function HandView:draw(hoverIndex, armedIndex)
         HandView.drawCard(f.id, { shadow = false })
         love.graphics.pop()
     end
+    local function opts(id, glow)
+        local o = info and info(id) or {}
+        return { glow = glow, cost = o.cost, disabled = o.disabled }
+    end
     for i, c in ipairs(self.cards) do
         if i ~= hoverIndex and i ~= armedIndex then
             love.graphics.push()
@@ -132,7 +144,7 @@ function HandView:draw(hoverIndex, armedIndex)
             love.graphics.rotate(c.rot)
             love.graphics.scale(c.scale, c.scale)
             love.graphics.setColor(1, 1, 1, 1)
-            HandView.drawCard(c.id)
+            HandView.drawCard(c.id, opts(c.id, false))
             love.graphics.pop()
         end
     end
@@ -144,7 +156,7 @@ function HandView:draw(hoverIndex, armedIndex)
             love.graphics.rotate(c.rot)
             love.graphics.scale(c.scale, c.scale)
             love.graphics.setColor(1, 1, 1, 1)
-            HandView.drawCard(c.id, { glow = (i == armedIndex) })
+            HandView.drawCard(c.id, opts(c.id, i == armedIndex))
             love.graphics.pop()
         end
     end

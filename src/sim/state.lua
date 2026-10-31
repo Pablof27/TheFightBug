@@ -27,7 +27,7 @@ function State.new(o)
         tick = 0, sunLimit = o.sunLimit or 40,
         openEdges = o.openEdges or false,
         log = {}, rng = o.seed or 12345,
-        jar = {}, deck = {}, hand = {}, discard = {}, exhaust = {}, field = {}, met = {}, metRival = {},
+        jar = {}, deck = {}, hand = {}, discard = {}, exhaust = {}, field = {}, met = {}, metRival = {}, caught = {},
         rule = nil, rival = nil, winner = nil, why = nil,
         stats = { scurried = { kid = 0, rival = 0 }, fell = { kid = 0, rival = 0 }, cards = 0, ticks = 0 },
     }
@@ -114,19 +114,21 @@ function State.living(s, side)
     return out
 end
 
---- Puts a new bug on the board. o: hp, timer, ready, jarUid, colonyIdx
+--- Puts a new bug on the board. o: hp, timer, ready, jarUid, bite (a stronger wild bug), bonus (+max stamina: a bigger
+--- one), prize (the best bug of a hunt spot)
 function State.spawnBug(s, speciesId, side, x, y, o)
     o = o or {}
     local sp = Bugs[speciesId]
     assert(sp, "unknown species " .. tostring(speciesId))
+    local maxHp = sp.hp + (o.bonus or 0)
     local b = {
         id = s.nextId, species = speciesId, side = side, x = x, y = y,
-        hp = o.hp or sp.hp, maxHp = sp.hp, bite = sp.bite, weight = sp.weight,
+        hp = o.hp or maxHp, maxHp = maxHp, bite = o.bite or sp.bite, weight = sp.weight,
         move = sp.move, mtype = sp.mtype, reach = sp.reach or 1,
         instinct = sp.instinct, traits = sp.traits, likes = sp.likes,
         baseTimer = sp.timer, timer = o.timer or sp.timer,
         ready = o.ready or false, curled = false, flipped = false, soaked = false,
-        acted = false, jarUid = o.jarUid, carrying = nil,
+        acted = false, jarUid = o.jarUid, carrying = nil, prize = o.prize or nil,
     }
     s.nextId = s.nextId + 1
     s.bugs[#s.bugs + 1] = b

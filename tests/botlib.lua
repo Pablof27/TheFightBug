@@ -20,12 +20,14 @@ function B.invariants(s)
         assert(not seen[k], "two bugs on tile " .. Grid.name(b.x, b.y))
         seen[k] = b
         assert(s.occ[k] == b, "occupancy map out of sync at " .. Grid.name(b.x, b.y))
-        assert(b.hp > 0 and b.hp <= b.maxHp, "bad hp " .. b.hp .. " on " .. b.species)
         assert(b.timer >= 0, "negative timer")
         assert(not b.gone, "removed bug still listed")
+        assert((b.hp > 0 or b.loose) and b.hp <= b.maxHp, "bad hp " .. b.hp .. " on " .. b.species)
         local c = Grid.cell(s, b.x, b.y)
         assert(c and not c.void, "bug on a void tile")
         assert(not c.block, "bug inside an obstacle (" .. tostring(c.block) .. ") " .. b.species .. " at " .. Grid.name(b.x, b.y))
+        assert(not c.trap, "bug standing in the jar " .. b.species .. " at " .. Grid.name(b.x, b.y))
+        if b.loose then assert(b.side == "kid" and b.hp == 0, "a loose bug that isn't one of yours") end
         if b.ready then assert(b.timer == 0, "ready bug with timer " .. b.timer) end
     end
     for k, b in pairs(s.occ) do assert(seen[k] == b, "stale occupancy") end
@@ -67,17 +69,20 @@ function B.legalActions(s)
             if Kid.homeFree(s, t.x, t.y) then acts[#acts + 1] = { kind = "release", ji = ji, x = t.x, y = t.y } end
         end
     end
+    if s.rule.id == "jar" then acts[#acts + 1] = { kind = "lid" } end
     return acts
 end
 
 function B.apply(s, a)
     if a.kind == "wait" then return Kid.wait(s) end
     if a.kind == "card" then return Kid.play(s, a.hi, a.sel) end
+    if a.kind == "lid" then return Kid.closeLid(s) end
     return Kid.release(s, a.ji, a.x, a.y)
 end
 
 function B.describe(s, a)
     if a.kind == "wait" then return "wait" end
+    if a.kind == "lid" then return "close the lid" end
     if a.kind == "release" then return string.format("release %s on %s", s.jar[a.ji].species, Grid.name(a.x, a.y)) end
     local parts = {}
     for _, v in ipairs(a.sel) do
@@ -88,12 +93,36 @@ function B.describe(s, a)
     return a.id .. " " .. table.concat(parts, " ")
 end
 
+--- A hunt can't be lost: what counts is what is in the jar, and who of yours is loose (or gone).
+local function huntValue(s)
+    local v = s.rule.score.kid * 100
+    for _, b in ipairs(s.bugs) do
+        if b.side == "kid" then v = v + (b.loose and -40 or b.hp * 3) end
+        if b.side == "rival" and b.prize then v = v + 5 end
+    end
+    for _, f in pairs(s.field) do v = v - (f.escaped or 0) * 120 end
+    -- the closer a wild bug is to the jar, the better
+    if s.trapAt then
+        for _, b in ipairs(s.bugs) do
+            if b.side == "rival" then v = v - (math.abs(b.x - s.trapAt.x) + math.abs(b.y - s.trapAt.y)) * 2 end
+        end
+    end
+    return v
+end
+
 function B.evaluate(s)
+    if s.rule.id == "jar" then
+        local v = huntValue(s)
+        -- closing the lid early only pays when nothing more is likely to happen
+        if s.winner then v = v - 6 end
+        return v
+    end
     if s.winner == "kid" then return 10000 - s.tick end
     if s.winner == "rival" then return -10000 + s.tick end
     local v = (Q.totalHp(s, "kid") - Q.totalHp(s, "rival")) * 3
     v = v + (Q.count(s, "kid") - Q.count(s, "rival")) * 5
     local r = s.rule
+    if s.keeps then v = v + (s.keeps.kid - s.keeps.rival) * 10 end
     if r.id == "crumbs" then
         v = v + (r.score.kid - r.score.rival) * 40
         for _, b in ipairs(s.bugs) do if b.carrying then v = v + (b.side == "kid" and 10 or -10) end end

@@ -148,7 +148,7 @@ function I.charger(s, bug)
             if not c or c.void then break end
             local o = State.at(s, x, y)
             if o then
-                if o.side ~= bug.side and not Q.isHidden(s, o) and (not (s.rule and s.rule.attackMode == "push") or o.weight <= bug.weight) then
+                if o.side ~= bug.side and not o.loose and not Q.isHidden(s, o) and (not (s.rule and s.rule.attackMode == "push") or o.weight <= bug.weight) then
                     local cand = { enemy = o, d = n, dir = d }
                     if better(cand, best) then best = cand end
                 end
@@ -384,6 +384,38 @@ function I.sweet(s, bug)
             it.action = { kind = "bite", target = best.e.id, dmg = bug.bite }
         else
             it.kind = (#it.path > 0) and "move" or "idle"
+        end
+    end
+    return it
+end
+
+-- ───────────────────────── Loose (one of your bugs knocked out on a hunt) ─────────────────────────
+-- It crawls 1 tile towards the nearest edge (the straight way out that is shortest; left, right, up, down on ties). If
+-- that tile is taken it tries the next way out; on the edge, its next crawl takes it off the board.
+local OUT = { { dx = -1, dy = 0 }, { dx = 1, dy = 0 }, { dx = 0, dy = 1 }, { dx = 0, dy = -1 } }
+
+function I.loose(s, bug)
+    local it = newIntent(bug)
+    it.target = { kind = "edge" }
+    local ways = {}
+    for i, d in ipairs(OUT) do
+        local n = d.dx < 0 and bug.x or d.dx > 0 and (s.w - bug.x + 1) or d.dy > 0 and (s.h - bug.y + 1) or bug.y
+        ways[#ways + 1] = { d = d, n = n, i = i }
+    end
+    table.sort(ways, function(a, b) if a.n ~= b.n then return a.n < b.n end return a.i < b.i end)
+    for _, w in ipairs(ways) do
+        local nx, ny = bug.x + w.d.dx, bug.y + w.d.dy
+        local c = Grid.cell(s, nx, ny)
+        if c == nil or c.void then
+            it.kind = "escape"
+            it.dx, it.dy = w.d.dx, w.d.dy
+            it.path = { { x = nx, y = ny } }
+            it.to = { x = nx, y = ny }
+            return it
+        elseif Path.canEnter(s, bug, nx, ny) then
+            it.kind = "crawl"
+            setPath(it, { { x = nx, y = ny } }, "walk")
+            return it
         end
     end
     return it

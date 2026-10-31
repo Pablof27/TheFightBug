@@ -26,23 +26,25 @@ function Q.isCoverCell(c)
 end
 
 --- Hidden (GDD §5.8, derived): a walker standing in grass or under a leaf, with no enemy next to it.
+--- Against the Science Nerd as a Gang leader ("I've read all about your bugs") your bugs never hide.
 function Q.isHidden(s, b)
-    if b.mtype == "fly" then return false end
+    if b.mtype == "fly" or b.loose then return false end
+    if b.side == "kid" and s.house == "nohide" then return false end
     local c = Grid.cell(s, b.x, b.y)
     if not c or not c.cover then return false end
     for _, d in ipairs(Grid.DIRS) do
         local o = State.at(s, b.x + d.dx, b.y + d.dy)
-        if o and o.side ~= b.side then return false end
+        if o and o.side ~= b.side and not o.loose then return false end
     end
     return true
 end
 
---- Enemies that this bug's instinct can see (Hidden ones are ignored).
+--- Enemies that this bug's instinct can see (Hidden ones are ignored, and so are your loose bugs on a hunt).
 function Q.visibleEnemies(s, bug)
     local out = {}
     for i = 1, #s.bugs do
         local o = s.bugs[i]
-        if o.side ~= bug.side and not Q.isHidden(s, o) then out[#out + 1] = o end
+        if o.side ~= bug.side and not o.loose and not Q.isHidden(s, o) then out[#out + 1] = o end
     end
     return out
 end
@@ -61,7 +63,7 @@ function Q.adjacentEnemies(s, bug, x, y)
     local out = {}
     for _, d in ipairs(Grid.DIRS) do
         local o = State.at(s, x + d.dx, y + d.dy)
-        if o and o.side ~= bug.side then out[#out + 1] = o end
+        if o and o.side ~= bug.side and not o.loose and not bug.loose then out[#out + 1] = o end
     end
     return out
 end

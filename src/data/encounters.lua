@@ -70,7 +70,7 @@ return {
     -- 3 ─ Mushi-Zumo on a tree stump: a small round arena (5x5), open edges, and nobody bites: everybody shoves.
     {
         id = "stump", name = "Stump Showdown", place = "The Old Stump", arena = "stump",
-        rule = "zumo", rival = "rich", sunLimit = 40, boss = true, w = 5, h = 5,
+        rule = "zumo", rival = "rich", sunLimit = 40, boss = true, w = 5, h = 5, openEdges = true,
         deploy = { "stag", "pillbug", "mantis" },
         layout = {
             ".....",

@@ -33,6 +33,50 @@ for _, enc in ipairs(Encounters) do
         enc.name, POLICY, r.fights, 100 * r.wins / r.fights, r.ticks / r.fights, r.decisions / r.fights, 100 * r.sun / r.fights, os.clock() - t0))
 end
 
+-- Bug Hunts: every spot at every Buzz, with the starting Jar. Fuzzes the jar trap and loose bugs (sim/trap.lua).
+do
+    local Run = require("sim.run")
+    local Hunt = require("sim.hunt")
+    local Fight = require("sim.fight")
+    local Kid = require("sim.kid")
+    local Park = require("data.park")
+    local r = { hunts = 0, caught = 0, loose = 0, escaped = 0, rescued = 0, ticks = 0 }
+    local t0 = os.clock()
+    for zone, z in pairs(Park.zones) do
+        for _, spot in ipairs(z.spots) do
+            for buzz = 0, Park.BUZZ_MAX do
+                for seed = 1, math.max(1, math.floor(N / 10)) do
+                    local run = Run.new(seed)
+                    run.phase, run.zone, run.buzz = "free", zone, buzz
+                    local s = Fight.new(Hunt.encounter(run, spot), { jar = Run.available(run), deck = run.deck, seed = seed })
+                    Fight.autoDeploy(s)
+                    assert(Kid.start(s), "the hunt starts")
+                    local steps = 0
+                    while not s.winner and steps < 120 do
+                        local a = B.choose(s, POLICY)
+                        if not (POLICY == "random" and a.kind == "lid" and steps < 6) then
+                            local ok, err = pcall(B.apply, s, a)
+                            assert(ok, "apply failed: " .. tostring(err))
+                            B.invariants(s)
+                        end
+                        steps = steps + 1
+                    end
+                    if not s.winner then Kid.closeLid(s) end
+                    assert(s.winner == "kid", "a hunt can't be lost")
+                    for _, b in ipairs(s.bugs) do assert(not b.loose, "nobody is left loose when a hunt is over") end
+                    r.hunts = r.hunts + 1
+                    r.caught = r.caught + #s.caught
+                    r.ticks = r.ticks + s.tick
+                    for _, f in pairs(s.field) do r.escaped = r.escaped + (f.escaped or 0); r.rescued = r.rescued + (f.rescued or 0) end
+                    for _, e in ipairs(s.log) do if e.type == "loose" then r.loose = r.loose + 1 end end
+                end
+            end
+        end
+    end
+    print(string.format("Bug Hunts         %-6s bot: %3d hunts  %.2f caught each  avg %4.1f ticks  %d knocked out (%d rescued, %d got away)  (%.1fs)",
+        POLICY, r.hunts, r.caught / r.hunts, r.ticks / r.hunts, r.loose, r.rescued, r.escaped, os.clock() - t0))
+end
+
 -- Butterfly check: put one lure on every legal tile and count how many DIFFERENT futures that produces.
 print("\nButterfly check (distinct futures / placements, after the card has been paid for)")
 for _, enc in ipairs(Encounters) do

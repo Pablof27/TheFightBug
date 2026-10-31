@@ -6,12 +6,15 @@
 --   scurry{id}  fall{id,x,y,dx,dy}  push{id,fx,fy,x,y,cause}  bump{id,other,x,y,dx,dy}  flip{id}  getup{id}  resist{id}
 --   timer{id,timer,delta,why}  soak{id}  eat{id,x,y,food}  sip{id}  pickup{id}  drop{x,y}  deliver{id,side,score}  rest{id,hp}
 --   chirp{id,ids}  alarm{id,others}  ready{id}  rollstart{id,dx,dy}  spawn{id,species,side,x,y}
+--   marble{from,to,id,by,kid,rival} (Showdown / "for keeps": every hit moves a marble)
+--   catch{id,species,x,y,prize,how}  loose{id,x,y}  rescue{id,x,y}  escape{id,x,y,dx,dy}  (Bug Hunts, sim/trap.lua)
 
 local U = require("sim.util")
 local Grid = require("sim.grid")
 local State = require("sim.state")
 local Q = require("sim.query")
 local Path = require("sim.path")
+local Trap = require("sim.trap")
 
 local R = {}
 
@@ -48,9 +51,14 @@ end
 
 -- ───────────────────────── arrival / reactions ─────────────────────────
 
---- Called whenever a bug has landed on a tile (walked, pushed, released…): puddles soak walkers.
+--- Called whenever a bug has landed on a tile (walked, pushed, released…): puddles soak walkers; on a hunt, the jar
+--- catches wild bugs and takes loose ones back.
 function R.arrive(s, b)
     local c = Grid.cell(s, b.x, b.y)
+    if c and c.trap then
+        if b.side == "rival" then Trap.catch(s, b) return end
+        if b.loose then Trap.rescue(s, b) return end
+    end
     local inWater = c and c.puddle and c.cover ~= "leaf" and b.mtype ~= "fly"
     if inWater and not b.soaked then
         b.soaked = true
@@ -65,7 +73,7 @@ end
 function R.reactionsAt(s, mover, x, y)
     local list = {}
     for _, a in ipairs(s.bugs) do
-        if a.ready and a ~= mover and a.side ~= mover.side and Grid.adjacent(a.x, a.y, x, y) then list[#list + 1] = a end
+        if a.ready and a ~= mover and a.side ~= mover.side and not mover.loose and Grid.adjacent(a.x, a.y, x, y) then list[#list + 1] = a end
     end
     table.sort(list, Q.byOrder)
     for _, a in ipairs(list) do
@@ -116,6 +124,8 @@ end
 
 function R.scurry(s, b, why)
     if b.gone then return end
+    -- on a hunt your knocked-out bugs don't scurry home: they run loose (sim/trap.lua)
+    if b.side == "kid" and not b.loose and s.rule and s.rule.id == "jar" then Trap.loosen(s, b) return end
     if b.carrying then
         local c = Grid.cell(s, b.x, b.y)
         if c and not c.food then
@@ -131,7 +141,7 @@ function R.scurry(s, b, why)
 end
 
 function R.damage(s, b, amount, src, kind)
-    if amount <= 0 or b.gone then return 0 end
+    if amount <= 0 or b.gone or b.loose then return 0 end
     if b.curled then
         State.emit(s, "blocked", { id = b.id, by = src and src.id })
         return 0
@@ -149,17 +159,27 @@ function R.damage(s, b, amount, src, kind)
 end
 
 --- An attack: damage, or (in Mushi-Zumo) a 1-tile shove. `kind` = bite | ram | strike.
+--- In a Showdown (and against a kid who plays "for keeps") every attack that lands (it hurts, or it shoves) also moves 1
+--- marble to the attacker's side. A curled pill bug's NOPE! saves the marble too.
 function R.attack(s, src, dst, dmg, kind, dx, dy)
     if src.gone or dst.gone then return end
     dx = dx or U.sign(dst.x - src.x)
     dy = dy or U.sign(dst.y - src.y)
     State.emit(s, "attack", { src = src.id, dst = dst.id, kind = kind, dmg = dmg, dx = dx, dy = dy })
+    local landed
     if s.rule and s.rule.attackMode == "push" then
         -- sumo: no damage, the shove flings the target as many tiles as the shover is heavy
         R.push(s, dst, dx, dy, "shove", src, src.weight)
+        landed = true
     else
-        R.damage(s, dst, dmg, src, kind)
+        landed = R.damage(s, dst, dmg, src, kind) > 0
         if kind == "ram" and not dst.gone then R.push(s, dst, dx, dy, "ram", src) end
+    end
+    local k = s.keeps
+    if landed and k and src.side ~= dst.side and k[dst.side] > 0 then
+        k[dst.side] = k[dst.side] - 1
+        k[src.side] = k[src.side] + 1
+        State.emit(s, "marble", { from = dst.side, to = src.side, id = dst.id, by = src.id, kid = k.kid, rival = k.rival })
     end
     if kind == "ram" and src.traits.wrestler and not dst.gone and dst.weight < src.weight and not dst.curled then R.flip(s, dst) end
 end
@@ -238,13 +258,15 @@ local function markTrail(s, bug, x, y)
     if bug.traits.trail then Grid.cell(s, x, y).trail = { side = bug.side, ttl = R.TRAIL_TTL } end
 end
 
--- Walkers squeeze past friends (a "pass" step: the bug is only over that tile in passing) but stop for enemies.
+-- Walkers squeeze past friends (a "pass" step: the bug is only over that tile in passing) but stop for enemies. Your bugs
+-- walk past the jar on a hunt the same way: they can't stop on it.
 local function walkSteps(s, bug, it)
     local lx, ly = bug.x, bug.y
     for i, p in ipairs(it.path) do
         local other = State.at(s, p.x, p.y)
-        if other and other ~= bug then
-            if other.side ~= bug.side or i == #it.path then break end
+        local jar = bug.side == "kid" and not bug.loose and Trap.on(s, p.x, p.y)
+        if (other and other ~= bug) or jar then
+            if (other and other ~= bug and other.side ~= bug.side) or i == #it.path then break end
             local c = Grid.cell(s, p.x, p.y)
             if not c or c.void then break end
             State.emit(s, "move", { id = bug.id, fx = lx, fy = ly, x = p.x, y = p.y, mode = it.mode, pass = true })
@@ -278,6 +300,11 @@ local function flySteps(s, bug, it)
             State.moveBug(s, bug, p.x, p.y)
             R.arrive(s, bug)
             R.reactions(s, bug)
+        elseif bug.side == "rival" and s.items and s.items.net and Trap.on(s, p.x, p.y) and not State.at(s, p.x, p.y) then
+            -- the Bug Net: a flyer passing over the jar is swept into it
+            State.moveBug(s, bug, p.x, p.y)
+            Trap.catch(s, bug, "net")
+            return false
         else
             R.reactionsAt(s, bug, p.x, p.y)
         end
@@ -350,6 +377,11 @@ end
 --- Executes an intent: wake up, move step by step (reactions may interrupt), act, reset the timer.
 function R.perform(s, bug, it)
     State.emit(s, "act", { id = bug.id, kind = it.kind, mode = it.mode, target = it.target, to = it.to })
+    if it.kind == "escape" then
+        -- a loose bug crawls off the board
+        Trap.escape(s, bug, it.dx, it.dy)
+        return
+    end
     if bug.curled then
         bug.curled = false
         State.emit(s, "uncurl", { id = bug.id })

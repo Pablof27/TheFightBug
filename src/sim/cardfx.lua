@@ -5,22 +5,31 @@ local Grid = require("sim.grid")
 local State = require("sim.state")
 local Q = require("sim.query")
 local R = require("sim.resolver")
+local Trap = require("sim.trap")
 local Cards = require("data.cards")
 
 local Fx = {}
 
 -- The kid looks down on the whole board: Hidden only fools the bugs, so every card can pick any bug (demo rule DD-35).
 
+--- Ant Farm Girl as a Gang leader: "Don't you dare flick my ants!" Your Nudge cards can't move her ants.
+local function protected(s, b)
+    return s.house == "noflick" and b.side == "rival" and (b.species == "ant" or b.species == "redant")
+end
+Fx.protected = protected
+
 local function walkable(s, x, y)
     local c = Grid.cell(s, x, y)
-    return c ~= nil and not c.void and not c.block
+    return c ~= nil and not c.void and not c.block and not c.trap
 end
 
+-- o.puddle: a puddle is fine.  o.jar: the jar's tile is fine (a lure can go in the jar; terrain can't go on it).
 local function freeGround(s, x, y, o)
     o = o or {}
     local c = Grid.cell(s, x, y)
     if not c or c.void or c.block or State.at(s, x, y) then return false end
     if c.puddle and c.cover ~= "leaf" and not o.puddle then return false end
+    if c.trap and not o.jar then return false end
     if c.food then return false end
     return true
 end
@@ -42,16 +51,22 @@ end
 local defs = {}
 
 defs.flick = {
-    bug = function(s, b) return b.weight <= 2 end,
+    bug = function(s, b) return b.weight <= 2 and not protected(s, b) end,
     dir = function() return true end,
     apply = function(s, sel)
+        local b = State.byId(s, sel[1])
         State.emit(s, "hand", { card = "flick", id = sel[1], dx = sel[2].dx, dy = sel[2].dy })
-        R.push(s, State.byId(s, sel[1]), sel[2].dx, sel[2].dy, "flick")
+        -- the Sweep Net: a flick into the grass where a wild bug hides scoops it straight into the jar
+        if s.rule.id == "jar" and s.items and s.items.sweep and b.side == "rival" and Q.isHidden(s, b) then
+            Trap.catch(s, b, "sweep")
+            return
+        end
+        R.push(s, b, sel[2].dx, sel[2].dy, "flick")
     end,
 }
 
 defs.shove = {
-    bug = function() return true end,
+    bug = function(s, b) return not protected(s, b) end,
     dir = function() return true end,
     apply = function(s, sel)
         State.emit(s, "hand", { card = "shove", id = sel[1], dx = sel[2].dx, dy = sel[2].dy })
@@ -61,7 +76,7 @@ defs.shove = {
 
 local function lure(kind)
     return {
-        tile = function(s, x, y) return freeGround(s, x, y) end,
+        tile = function(s, x, y) return freeGround(s, x, y, { jar = true }) end,
         apply = function(s, sel)
             local p = sel[1]
             Grid.cell(s, p.x, p.y).food = { kind = kind }
@@ -160,7 +175,7 @@ defs.blow = {
         local p, d = sel[1], sel[2]
         local line = {}
         for _, b in ipairs(s.bugs) do
-            if b.weight == 1 and ((d.dx ~= 0 and b.y == p.y) or (d.dy ~= 0 and b.x == p.x)) then line[#line + 1] = b end
+            if b.weight == 1 and not protected(s, b) and ((d.dx ~= 0 and b.y == p.y) or (d.dy ~= 0 and b.x == p.x)) then line[#line + 1] = b end
         end
         table.sort(line, function(a, b) return (a.x * d.dx + a.y * d.dy) > (b.x * d.dx + b.y * d.dy) end)
         State.emit(s, "blow", { x = p.x, y = p.y, dx = d.dx, dy = d.dy })
@@ -185,12 +200,14 @@ local function anchorOf(s, def, sel)
 end
 
 --- What can be picked next? Returns { kind, items = { {id}|{x,y}|{x,y,dx,dy,ok} } } or nil when the card is complete.
+--- The Bully as a Gang leader ("No Lures in my sandbox!") leaves Lure cards with nothing to pick.
 function Fx.options(s, cardId, sel)
     local def = Cards[cardId]
     local fx = defs[cardId]
     local kind = def.steps[#sel + 1]
     if not kind then return nil end
     local out = { kind = kind, items = {} }
+    if def.type == "lure" and s.house == "nolures" then return out end
     if kind == "bug" then
         for _, b in ipairs(Q.timeline(s)) do
             if fx.bug(s, b) then out.items[#out.items + 1] = { id = b.id, x = b.x, y = b.y } end

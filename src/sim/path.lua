@@ -10,11 +10,14 @@ local State = require("sim.state")
 local Path = {}
 
 --- Can `bug` stand on (x, y)?  o.pushed: a pushed walker may be dropped into a puddle.  o.pass: friends don't block.
+--- On a hunt your own bugs can't stop on the jar or be pushed into it (they walk past it, like past a friend); wild bugs
+--- and your loose bugs can step into it (and are caught, or taken back: sim/trap.lua).
 function Path.canEnter(s, bug, x, y, o)
     o = o or {}
     local c = Grid.cell(s, x, y)
     if not c or c.void or c.block then return false end
     if c.puddle and c.cover ~= "leaf" and bug.mtype ~= "fly" and not o.pushed then return false end
+    if c.trap and bug.side == "kid" and not bug.loose and not o.pass then return false end
     local other = State.at(s, x, y)
     if other and other ~= bug and not (o.pass and other.side == bug.side) then return false end
     return true
@@ -27,6 +30,7 @@ function Path.canLand(s, bug, x, y)
     local c = Grid.cell(s, x, y)
     if not c or c.void or c.block then return false end
     if bug.mtype == "jump" and c.puddle and c.cover ~= "leaf" then return false end
+    if c.trap and bug.side == "kid" and not bug.loose then return false end
     local o = State.at(s, x, y)
     if o and o ~= bug then return false end
     return true
