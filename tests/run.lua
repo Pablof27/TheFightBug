@@ -478,36 +478,89 @@ test("the bet is the smaller stack, the winner takes it, and a broke rival ends 
     truthy(Duel.leave(run)); eq(run.phase, "free"); eq(run.window, 2, "on to the van and the Gang leader"); truthy(Shop.isOpen(run))
 end)
 
-test("the rematch ladder: the loser picks the game, then the Showdown ends the duel whatever happens", function()
+--- Where the rival's bugs start, as text: "r1@3,6 r2@5,5 ..."
+local function lineupOf(run)
+    local out = {}
+    for _, t in ipairs(Duel.encounter(run).rivalTeam) do out[#out + 1] = t.uid .. "@" .. t.x .. "," .. t.y end
+    return table.concat(out, " ")
+end
+
+test("the rematch: the same game on the same board, the rival's bugs on other tiles; then the Showdown ends the duel", function()
     local run = newDay(2)
     local kid = run.kids[1]
     Duel.start(run, kid)
     run.marbles, run.stacks[kid] = 10, 4
-    local first = run.duel.rule
+    local first, board = run.duel.rule, Duel.boardId(run)
+    local used = {}
+    for _, t in ipairs(Duel.encounter(run).rivalTeam) do used[t.x .. "," .. t.y] = true end
     settle(run, "rival")
     eq(run.marbles, 6); eq(run.stacks[kid], 8); eq(run.duel.round, 2); eq(run.duel.mood, "cocky")
-    truthy(run.duel.pick, "you lost: you pick the next game"); eq(Duel.encounter(run), nil, "not before you pick")
-    for _, r in ipairs(run.duel.pick) do truthy(r ~= first, "never the one just played") end
-    truthy(Duel.pickRule(run, run.duel.pick[1]))
+    local enc = Duel.encounter(run)
+    eq(enc.rule, first, "you lost round 1: the same game again, nobody picks"); eq(Duel.boardId(run), board, "on the same board")
+    for _, t in ipairs(enc.rivalTeam) do truthy(not used[t.x .. "," .. t.y], "their bugs start on other tiles") end
     eq(Duel.stake(run), 6); eq(Duel.allIn(run), "kid")
     settle(run, "kid")
     eq(run.marbles, 12); eq(run.stacks[kid], 2); eq(run.duel.round, 3); eq(run.duel.mood, "angry")
-    eq(Duel.rule(run), "showdown"); eq(Duel.stake(run), 0)
-    local enc = Duel.encounter(run)
+    eq(Duel.rule(run), "showdown"); eq(Duel.stake(run), 0); eq(Duel.boardId(run), board, "the Showdown too")
+    enc = Duel.encounter(run)
     eq(enc.rule, "showdown"); eq(enc.keeps.kid, 12); eq(enc.keeps.rival, 2); truthy(enc.keeps.endOnBroke)
     settle(run, "draw", { keeps = { kid = 13, rival = 1 } })
     eq(run.duel.over.why, "bell", "the Showdown ends the duel"); eq(run.marbles, 13); eq(run.stacks[kid], 1)
 end)
 
-test("the rival who loses round 1 picks its second favourite; Little Sibling picks at random, but always the same way", function()
+test("every kid plays one game, never Mushi-Zumo for now; Little Sibling rolls hers once per act", function()
+    local Rivals = require("data.rivals")
+    for id, rv in pairs(Rivals) do
+        local ok = rv.rule == "random"
+        for _, r in ipairs(ParkData.RULES) do if r == rv.rule then ok = true end end
+        truthy(ok, id .. " plays a game from Park.RULES"); truthy(rv.rule ~= "zumo", id .. ": Mushi-Zumo is parked")
+    end
+    for zid, z in pairs(ParkData.zones) do
+        for _, r in ipairs(ParkData.RULES) do truthy(ParkData.boards[z.rules[r]], zid .. " has a board for " .. r) end
+    end
     local run = newDay(3)
     local kid = run.kids[1]
     Duel.start(run, kid)
     run.marbles, run.stacks[kid] = 3, 9
+    local rule = run.duel.rule
+    eq(rule, Duel.ruleOf(run, kid))
     settle(run, "kid")
-    eq(run.duel.rule, Duel.favourite(run, kid, 2, true)); eq(run.duel.pick, nil)
-    local a, b = Duel.favourite(run, "sibling", 1), Duel.favourite(run, "sibling", 1)
-    eq(a, b, "seeded")
+    eq(run.duel.round, 2); eq(run.duel.rule, rule, "the rival lost round 1: still the same game")
+    eq(Duel.ruleOf(run, "sibling"), Duel.ruleOf(run, "sibling"), "seeded")
+    local seen = {}
+    for seed = 1, 30 do seen[Duel.ruleOf(newDay(seed), "sibling")] = true end
+    truthy(seen.lbs and seen.crumbs and not seen.zumo, "either game, never Mushi-Zumo")
+end)
+
+test("the rival's bugs start on random free tiles of their home rows: other tiles every round, the same after a reload", function()
+    local firsts = {}
+    for seed = 1, 12 do
+        local run = newDay(seed)
+        Duel.start(run, run.kids[1])
+        run.marbles, run.stacks[run.kids[1]] = 30, 30
+        local b = ParkData.boards[Duel.boardId(run)]
+        firsts[lineupOf(run):gsub("r%d+@", "")] = true
+        local prev
+        for round = 1, 3 do
+            local enc = Duel.encounter(run)
+            eq(enc.round, round)
+            local here = {}
+            for _, t in ipairs(enc.rivalTeam) do
+                truthy(t.y > b.h - 2, "in their home rows")
+                local ch = enc.layout[b.h - t.y + 1]:sub(t.x, t.x)
+                truthy(ch ~= "p" and ch ~= "k" and ch ~= "~" and ch ~= "#", "never on a blocked tile")
+                truthy(not here[t.x .. "," .. t.y], "one bug per tile"); here[t.x .. "," .. t.y] = true
+                truthy(not (prev and prev[t.x .. "," .. t.y]), "never a tile the round before used")
+            end
+            eq(lineupOf(Save.decode(Save.encode({ run = run })).run), lineupOf(run), "a reload lines them up the same way")
+            prev = here
+            settle(run, "draw")
+        end
+        eq(run.duel.over.why, "bell", "three rounds were played")
+    end
+    local n = 0
+    for _ in pairs(firsts) do n = n + 1 end
+    truthy(n >= 6, "round 1 starts somewhere else in most duels (" .. n .. " different lineups in 12)")
 end)
 
 test("in the Showdown every hit moves a marble, and a side that runs out is broke", function()
@@ -538,7 +591,6 @@ test("napping: bugs knocked out in a round sit out the next one, on both sides, 
     truthy(ant.nap, "your colony naps"); truthy(run.duel.roster[1].nap, "so does their first bug")
     eq(rec.napped[1], "ant"); eq(rec.rnapped[1], run.duel.roster[1].species)
     for _, e in ipairs(Run.available(run)) do truthy(e.uid ~= ant.uid, "a napping bug can't play") end
-    Duel.pickRule(run, run.duel.pick[1])
     for _, t in ipairs(Duel.encounter(run).rivalTeam) do truthy(t.uid ~= "r1", "theirs neither") end
     settle(run, "kid")
     eq(ant.nap, nil, "it sat out a round: awake again"); eq(run.duel.roster[1].nap, nil)
@@ -775,7 +827,6 @@ test("a saved run loads back exactly, in the middle of a duel, so its seed deals
     Hunt.settle(run, { hunt = { spot = Hunt.spots(run)[1] }, caught = { { species = "wasp" } }, met = { wasp = true }, field = { [1] = { total = 3, lost = 3, rescued = 1 } } })
     Duel.start(run, run.kids[1])
     settle(run, "rival", { field = { r2 = { total = 1, lost = 1 } } })
-    if run.duel.pick then Duel.pickRule(run, run.duel.pick[1]) end
     run.rewinds = 4
     local rec = assert(Save.decode(Save.encode({ run = run, savedAt = 1761745816 })))
     eq(rec.savedAt, 1761745816); eq(rec.ended, nil, "still going")

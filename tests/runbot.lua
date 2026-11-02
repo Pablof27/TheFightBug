@@ -97,9 +97,7 @@ end
 local function duel(run, st)
     local d = run.duel
     while not d.over do
-        if d.pick then
-            Duel.pickRule(run, d.pick[1])
-        elseif Duel.forfeitSide(run) then
+        if Duel.forfeitSide(run) then
             Duel.forfeit(run)
             st.forfeits = st.forfeits + 1
         else

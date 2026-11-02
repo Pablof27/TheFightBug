@@ -51,9 +51,10 @@ end
 
 local function ruleName(id) return RuleData[id] and RuleData[id].name or id end
 
-local function rulesLine(rv)
-    if rv.rules[1] == "random" then return "Picks a random game every round." end
-    return "Plays " .. ruleName(rv.rules[1]) .. (rv.rules[2] and (", then " .. ruleName(rv.rules[2])) or "") .. "."
+local function rulesLine(run, id)
+    local game = ruleName(Duel.ruleOf(run, id))
+    if Rivals[id].rule == "random" then return "Plays " .. game .. " (picked at random)." end
+    return "Plays " .. game .. "."
 end
 
 --- The bug's entry stats as they would be in a fight (a big one has 1 more stamina, or 1 more ant).
@@ -192,7 +193,7 @@ function Scene:drawZoneCard(i, o, r)
         Text.body('"' .. rv.house.name .. '"', r.x + 166, ly + 98, 14.5, C.magentaDark, "left", r.w - 196)
         Text.body(rv.house.text, r.x + 166, ly + 122, 13, INK, "left", r.w - 196)
     end
-    Text.body(rulesLine(rv), r.x + 166, ly + 146, 13, SOFT, "left", r.w - 196)
+    Text.body(rulesLine(run, o.leader), r.x + 166, ly + 146, 13, SOFT, "left", r.w - 196)
     self:button({ x = r.x + 30, y = r.y + r.h - 96, w = r.w - 60, h = 72 }, "zone" .. i, "PLAY HERE", { size = 30, fill = C.teal, seed = 450 + i })
 end
 
@@ -398,7 +399,7 @@ function Scene:drawKidCard(i, id, r)
     local mine = run.marbles <= stack
     Text.body("Round 1: both bet " .. stake .. ".", r.x + 18, r.y + 162, 12, INK, "left", r.w - 36)
     UI.tag(mine and "YOU: ALL IN" or "THEM: ALL IN", r.x + r.w - 14, r.y + 158, 10, mine and C.red or C.green, { align = "right", seed = 562 + i })
-    Text.body(rulesLine(rv), r.x + 18, r.y + 186, 12, C.tealDark, "left", r.w - 36)
+    Text.body(rulesLine(run, id), r.x + 18, r.y + 186, 12, C.tealDark, "left", r.w - 36)
     for k = 1, math.min(rv.field or 4, #rv.roster) do
         UI.bugDisc(rv.roster[k], r.x + 30 + (k - 1) * 34, r.y + 258, 15, { ring = C.magenta, seed = 563 + k, shadow = false })
     end
@@ -430,7 +431,7 @@ function Scene:drawLeaderCard(r)
         Text.display("HOUSE RULE", r.x + 198, y + 168, 11, C.magentaDark, "left")
         Text.body('"' .. rv.house.name .. '" ' .. rv.house.text, r.x + 198, y + 186, 12, INK, "left", r.w - 228)
     end
-    Text.body(rulesLine(rv), r.x + 184, y + 244, 12, C.tealDark, "left", r.w - 200)
+    Text.body(rulesLine(run, id), r.x + 184, y + 244, 12, C.tealDark, "left", r.w - 200)
     for k = 1, math.min(rv.field or 4, #rv.roster) do
         UI.bugDisc(rv.roster[k], r.x + 198 + (k - 1) * 38, y + 282, 16, { ring = C.magenta, seed = 584 + k, shadow = false })
     end

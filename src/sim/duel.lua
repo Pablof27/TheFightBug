@@ -1,8 +1,9 @@
 -- Duels (GDD §8.5): a match against a rival kid for marbles, over 1 to 3 rounds. Each round is a normal fight.
 --   stakes   before each round both sides bet the SMALLER of the two stacks: the poorer side is always all in, and the
 --            winner takes the bet. The duel ends when a side is broke, or after the Showdown.
---   ladder   round 1: the rival's favourite Rule. Round 2: the loser picks the game (you choose from the other Rules; the
---            rival picks its second favourite). Round 3: the Showdown, no bet, every hit moves a marble; then it's over.
+--   ladder   rounds 1 and 2 play the rival's Rule on the same board: round 2 is a plain rematch (D-009). Round 3: the
+--            Showdown, no bet, every hit moves a marble; then it's over.
+--   lineup   the rival's bugs start on random tiles of their home rows, and on other tiles in every round (seeded).
 --   napping  both sides: bugs knocked out in a round sit out the next one (GDD §8.7); the ones that sat out wake up.
 --   moods    a rival who lost the last round is Angry (signature move 1 tick sooner), one who won it is Cocky (1 later).
 -- The duel lives in run.duel, plain data like the rest of the run.
@@ -21,18 +22,13 @@ Duel.SHOWDOWN_FORFEIT = 3   -- what a side that can't field a bug pays in the Sh
 
 local contains = Run.contains
 
---- Little Sibling picks a random Rule every round (seeded, so it can be shown in advance).
-local function randomRule(run, round)
-    local g = Run.gen(run, "sibling:" .. run.act .. ":" .. (run.window or 1) .. ":" .. round)
-    return Park.RULES[U.rand(g, #Park.RULES)]
+--- The Rule a kid plays in every round of a duel but the Showdown. Little Sibling rolls one at random, once per act
+--- (seeded, so the park can show it in advance).
+function Duel.ruleOf(run, rivalId)
+    local rule = Rivals[rivalId].rule
+    if rule ~= "random" then return rule end
+    return Park.RULES[U.rand(Run.gen(run, "sibling:" .. run.act), #Park.RULES)]
 end
-
-local function favourite(run, rivalId, round, second)
-    local rules = Rivals[rivalId].rules
-    if rules[1] == "random" then return randomRule(run, round) end
-    return second and (rules[2] or rules[1]) or rules[1]
-end
-Duel.favourite = favourite
 
 --- Who can you challenge right now? Window 1: the act's two kids; window 2: its Gang leader.
 function Duel.challengers(run)
@@ -58,7 +54,7 @@ function Duel.start(run, rivalId)
     end
     local roster = {}
     for i, sp in ipairs(Rivals[rivalId].roster) do roster[i] = { uid = "r" .. i, species = sp } end
-    local rule = favourite(run, rivalId, 1)
+    local rule = Duel.ruleOf(run, rivalId)
     run.duel = {
         rival = rivalId, leader = leader, round = 1, mood = "neutral", rule = rule,
         board1 = Park.zones[run.zone].rules[rule],
@@ -82,11 +78,9 @@ function Duel.rule(run)
     return d.round >= 3 and "showdown" or d.rule
 end
 
---- The board of the coming round: the zone plays each Rule on one of its boards; the Showdown stays on round 1's.
+--- The board of the duel: the one the zone plays the rival's Rule on. Every round, the Showdown too, is played there.
 function Duel.boardId(run)
-    local d = run.duel
-    if d.round >= 3 then return d.board1 end
-    return Park.zones[run.zone].rules[d.rule]
+    return run.duel.board1
 end
 
 --- Marbles each side puts in the pot this round: the smaller stack (0 in the Showdown).
@@ -111,20 +105,23 @@ local function blocked(b, layout, x, y)
     return ch == "p" or ch == "k" or ch == "~" or ch == "#"
 end
 
---- The bugs the rival sends out: the first `field` roster entries that aren't napping, on their home rows.
+--- The bugs the rival sends out: the first `field` roster entries that aren't napping, on random tiles of their home
+--- rows. The free tiles are shuffled once per duel (seeded) and each round takes the next `field` of them, so a rematch
+--- never starts on a tile the round before used (while the home rows have room for both rounds).
 function Duel.lineup(run, b, layout)
     local d = run.duel
     local rv = Rivals[d.rival]
     local field = (rv.field or 4) + (Duel.house(run) == "double" and 1 or 0)
-    local team, si = {}, 1
-    local spots = Park.rivalSpots[b.w]
+    local free = {}
+    for _, p in ipairs(Park.rivalSpots[b.w]) do
+        if not blocked(b, layout, p[1], p[2]) then free[#free + 1] = p end
+    end
+    U.shuffle(Run.gen(run, "lineup:" .. run.act .. ":" .. (run.window or 1) .. ":" .. d.rival), free)
+    local team, first = {}, (d.round - 1) * field
     for _, e in ipairs(d.roster) do
-        if #team >= field then break end
+        if #team >= math.min(field, #free) then break end
         if not e.nap then
-            while spots[si] and blocked(b, layout, spots[si][1], spots[si][2]) do si = si + 1 end
-            local p = spots[si]
-            if not p then break end
-            si = si + 1
+            local p = free[(first + #team) % #free + 1]
             team[#team + 1] = { species = e.species, x = p[1], y = p[2], uid = e.uid, timer = Bugs[e.species].timer + (#team % 2) }
         end
     end
@@ -139,11 +136,10 @@ function Duel.forfeitSide(run)
     return "rival"
 end
 
---- The encounter of the coming round (for sim/fight.lua), or nil when there is no round to play right now (the duel is
---- over, or you still have to pick the Rule).
+--- The encounter of the coming round (for sim/fight.lua), or nil when the duel is over.
 function Duel.encounter(run)
     local d = run.duel
-    if not d or d.over or d.pick then return nil end
+    if not d or d.over then return nil end
     local rv = Rivals[d.rival]
     local b = Park.boards[Duel.boardId(run)]
     local rule = Duel.rule(run)
@@ -171,20 +167,6 @@ function Duel.encounter(run)
         rivalTeam = Duel.lineup(run, b, layout), house = house, stake = stake, keeps = keeps, mood = d.mood,
         round = d.round, leader = d.leader, boss = d.leader,
     }
-end
-
---- Loser's choice (round 2) when you lost round 1: every built Rule but the one just played.
-function Duel.choices(run, last)
-    local out = {}
-    for _, id in ipairs(Park.RULES) do if id ~= last then out[#out + 1] = id end end
-    return out
-end
-
-function Duel.pickRule(run, ruleId)
-    local d = run.duel
-    if not (d and d.pick) or not contains(d.pick, ruleId) then return false end
-    d.rule, d.pick = ruleId, nil
-    return true
 end
 
 --- Napping after a round (both sides): who sat it out wakes up, who got knocked out in it naps.
@@ -277,10 +259,6 @@ function Duel.settle(run, s)
     else
         d.round = d.round + 1
         d.mood = s.winner == "kid" and "angry" or "cocky"
-        if d.round == 2 then
-            if s.winner == "kid" then d.rule = favourite(run, d.rival, 2, true)
-            else d.pick = Duel.choices(run, d.rule) end
-        end
     end
     return rec
 end
@@ -289,7 +267,7 @@ end
 function Duel.forfeit(run)
     local d = run.duel
     local side = Duel.forfeitSide(run)
-    if not side or d.over or d.pick then return nil end
+    if not side or d.over then return nil end
     local s = { winner = side == "kid" and "rival" or "kid", why = "forfeit", field = {}, stake = Duel.stake(run) }
     if Duel.rule(run) == "showdown" then
         local pay = Duel.SHOWDOWN_FORFEIT

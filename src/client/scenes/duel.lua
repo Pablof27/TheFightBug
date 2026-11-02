@@ -220,26 +220,12 @@ function Scene:drawStake()
     if Duel.house(run) == "keeps" then Text.body("For keeps: every hit also moves a marble.", P.x + 30, P.y + 128, 12, C.magentaDark, "center", P.w - 60) end
 end
 
---- What we know about round i: { rule, title, sub, state = "done" | "now" | "later", rec }
+--- What we know about round i: { rule, sub, state = "done" | "now" | "later", rec }
 function Scene:roundInfo(i)
-    local run = self.run
     local d = self:duel()
-    local zone = PD.zones[run.zone]
     local rec = d.history[i]
-    local info = { rec = rec }
-    if i == 3 then
-        info.rule = "showdown"
-        info.sub = BOARD_NAME[PD.boards[d.board1].arena] or ""
-    elseif rec then
-        info.rule = rec.rule
-        info.sub = BOARD_NAME[PD.boards[zone.rules[rec.rule]].arena] or ""
-    elseif i == d.round and not d.pick then
-        info.rule = d.rule
-        info.sub = BOARD_NAME[PD.boards[zone.rules[d.rule]].arena] or ""
-    elseif i == 2 then
-        info.title = d.pick and "YOU PICK!" or "LOSER'S CHOICE"
-        info.sub = "Who loses round 1 picks the game."
-    end
+    local info = { rec = rec, rule = i == 3 and "showdown" or (rec and rec.rule) or d.rule }
+    info.sub = (i == 2 and not rec) and "Rematch: new starting spots." or BOARD_NAME[PD.boards[d.board1].arena] or ""
     info.state = rec and "done" or (i == d.round and not d.over) and "now" or "later"
     return info
 end
@@ -255,9 +241,9 @@ function Scene:drawLadder()
         Paper.panel(r.x, r.y - (now and 8 or 0), r.w, r.h, { fill = fill, seed = 950 + i, r = 18, rot = (i - 2) * 0.012, tape = now })
         local ry = r.y - (now and 8 or 0)
         Text.display("ROUND " .. i, r.x + r.w / 2, ry + 18, 18, i == 3 and C.magenta or C.tealDark, "center")
-        local title = info.title or ruleName(info.rule)
+        local title = ruleName(info.rule)
         Text.display(title, r.x + 14, ry + 54, 20, INK, "center", r.w - 28)
-        if info.rule and RuleData[info.rule] then
+        if RuleData[info.rule] then
             Text.body(RuleData[info.rule].short, r.x + 16, ry + 86, 12, INK, "center", r.w - 32)
         end
         Text.body(info.sub or "", r.x + 16, ry + 146, 11.5, SOFT, "center", r.w - 32)
@@ -278,7 +264,7 @@ function Scene:drawLadder()
         elseif now then
             UI.tag("NEXT!", r.x + r.w / 2, ry + 188, 16, C.magenta, { align = "center", seed = 965 + i })
         end
-        if info.rule and RuleData[info.rule] then
+        if RuleData[info.rule] then
             UI.hit(self.hits, r, "tip", { tip = { RuleData[info.rule].name, RuleData[info.rule].long } })
         end
     end
@@ -315,7 +301,7 @@ end
 function Scene:drawActions()
     local run = self.run
     local d = self:duel()
-    if d.over or d.pick then return end
+    if d.over then return end
     local side = Duel.forfeitSide(run)
     local r = { x = 520, y = 760, w = 560, h = 104 }
     if side == "kid" then
@@ -331,33 +317,6 @@ function Scene:drawActions()
 end
 
 -- ───────────────────────── overlays ─────────────────────────
-
-function Scene:drawPick()
-    local run = self.run
-    local d = self:duel()
-    UI.veil(0.55)
-    local P = { x = 220, y = 120, w = 1160, h = 660 }
-    Paper.panel(P.x, P.y, P.w, P.h, { fill = { 1, 0.95, 0.7 }, seed = 990, r = 26, rot = -0.004, tape = true })
-    Text.display("LOSER'S CHOICE", 800, P.y + 30, 44, C.magenta, "center")
-    Text.body("You lost round 1, so you pick the game for round 2. Pick the one your bugs are good at.", P.x + 80, P.y + 90, 17, INK, "center", P.w - 160)
-    local zone = PD.zones[run.zone]
-    local n = #d.pick
-    local w = 440
-    local x0 = 800 - (n * w + (n - 1) * 40) / 2
-    for i, id in ipairs(d.pick) do
-        local def = RuleData[id]
-        local r = { x = x0 + (i - 1) * (w + 40), y = P.y + 150, w = w, h = 450 }
-        local key = "rule" .. i
-        local hov = self.hover == key
-        Paper.panel(r.x, r.y + (hov and -6 or 0), r.w, r.h, { fill = hov and { 1, 1, 0.94 } or C.cream, seed = 991 + i, r = 20, rot = (i == 1) and -0.008 or 0.008 })
-        local y = r.y + (hov and -6 or 0)
-        Text.display(def.name, r.x + 20, y + 24, 28, INK, "center", r.w - 40)
-        Text.body(BOARD_NAME[PD.boards[zone.rules[id]].arena] or "", r.x + r.w / 2, y + 66, 14, SOFT, "center")
-        Text.body(def.long, r.x + 28, y + 100, 14, INK, "left", r.w - 56)
-        Text.body("Good for: " .. (def.favours or "anybody"), r.x + 28, y + r.h - 130, 14, C.tealDark, "left", r.w - 56)
-        self:button({ x = r.x + 40, y = y + r.h - 96, w = r.w - 80, h = 70 }, key, "PLAY THIS", { size = 28, fill = C.teal, seed = 995 + i }, { rule = id })
-    end
-end
 
 function Scene:drawOver()
     local run = self.run
@@ -450,9 +409,6 @@ function Scene:draw()
     if d.over then
         self.hits = {}
         self:drawOver()
-    elseif d.pick then
-        self.hits = {}
-        self:drawPick()
     end
     local h = UI.hitAt(self.hits, self.mouse.x, self.mouse.y)
     self.hover = h and h.key or nil
@@ -473,11 +429,6 @@ function Scene:press(key, data)
             Audio.play(rec.winner == "kid" and "coin" or "lose", 0.7)
             self.rec = rec
             if run.duel and run.duel.over then self:enter() end
-        end
-    elseif action == "rule" then
-        if Duel.pickRule(run, data.rule) then
-            Saves.store(run)
-            Audio.play("ui_click")
         end
     elseif action == "offer" then
         local ok = Duel.takeOffer(run, n)
@@ -516,7 +467,7 @@ function Scene:keypressed(key)
     if key == "escape" then
         Audio.play("ui_back")
         self.app.switch("title")
-    elseif (key == "return" or key == "space") and not d.over and not d.pick and not Duel.forfeitSide(self.run) then
+    elseif (key == "return" or key == "space") and not d.over and not Duel.forfeitSide(self.run) then
         self:press("play", {})
     end
 end

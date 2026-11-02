@@ -22,7 +22,7 @@ Park.acts = {
       text = "Long shadows. The big kids come out to play." },
 }
 
--- The boards duels are played on. A zone plays every Rule on one of them.
+-- The boards duels are played on. A zone plays each Rule on one of them.
 Park.boards = {
     sandbox = {
         arena = "sandbox", w = 6, h = 6,
@@ -75,31 +75,32 @@ Park.boards = {
     },
 }
 
--- Where rival bugs line up in their home rows, by board size (blocked tiles are skipped).
+-- The tiles of the rival's home rows, by board size. Each duel shuffles them (sim/duel.lua lineup); blocked ones are skipped.
 Park.rivalSpots = {
     [6] = { { 3, 6 }, { 4, 6 }, { 2, 5 }, { 5, 5 }, { 2, 6 }, { 5, 6 }, { 1, 5 }, { 6, 5 }, { 3, 5 }, { 4, 5 }, { 1, 6 }, { 6, 6 } },
     [5] = { { 3, 5 }, { 2, 4 }, { 4, 4 }, { 2, 5 }, { 4, 5 }, { 1, 4 }, { 5, 4 }, { 3, 4 }, { 1, 5 }, { 5, 5 } },
 }
 
--- The Rules that are built (GDD §5.11 ★). The Showdown is always round 3 and played on round 1's board.
-Park.RULES = { "lbs", "crumbs", "zumo" }
+-- The Rules kids play (GDD §5.11 ★); Little Sibling rolls one of them. Mushi-Zumo is built (sim/rules.lua) but parked
+-- (D-010): most players lack the heavy bugs or the shoves to win it. The Showdown is always round 3, on the duel's board.
+Park.RULES = { "lbs", "crumbs" }
 
 Park.zones = {
     sandbox = {
         name = "The Sandbox", short = "Sandbox", backdrop = "sandbox", huntArena = "sandbox5",
-        rules = { lbs = "sandbox", crumbs = "sandbox", zumo = "stump" },
+        rules = { lbs = "sandbox", crumbs = "sandbox" },
         spots = { "bucket", "corner", "castle" },
         text = "Dry sand, a forgotten bucket and the ruins of yesterday's castle.",
     },
     lawn = {
         name = "The Lawn", short = "Lawn", backdrop = "lawn", huntArena = "lawn5",
-        rules = { lbs = "lawn", crumbs = "lawn", zumo = "stump" },
+        rules = { lbs = "lawn", crumbs = "lawn" },
         spots = { "grass", "clover", "molehill" },
         text = "Long grass and clover nobody has mowed for a week.",
     },
     stump = {
         name = "The Old Stump", short = "Old Stump", backdrop = "stump", huntArena = "stump",
-        rules = { lbs = "stump", crumbs = "lawn", zumo = "stump" },
+        rules = { lbs = "stump", crumbs = "lawn" },
         spots = { "bark", "deadwood", "litter" },
         text = "What's left of the old oak: bark, rotting wood and a carpet of dead leaves.",
     },

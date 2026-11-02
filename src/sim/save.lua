@@ -54,6 +54,7 @@ end
 local function opt(v, check) return v == nil or check(v) end
 local function bool(v) return type(v) == "boolean" end
 
+-- zumo is parked (D-010), but a day saved before that may still be in the middle of a round of it
 local RULES = { lbs = true, crumbs = true, zumo = true, showdown = true }
 
 local function checkDuel(d, run)
@@ -65,7 +66,6 @@ local function checkDuel(d, run)
         if type(e) ~= "table" or type(e.uid) ~= "string" or not Bugs[e.species] or not opt(e.nap, bool) then return false end
     end
     if not list(d.history) then return false end
-    if d.pick ~= nil and not names(d.pick, RULES) then return false end
     if d.over ~= nil and (type(d.over) ~= "table" or type(d.over.why) ~= "string") then return false end
     if d.offer ~= nil then
         if not list(d.offer) then return false end
